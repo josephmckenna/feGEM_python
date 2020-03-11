@@ -55,18 +55,44 @@ class DataPacker:
         t = threading.Thread(target=self.Run,args=(flush_time,))
         t.start()
         print("Polling thread launched")
+    def UniqueToFlush(self):
+        n=0
+        for bank in self.DataBanks:
+            if bank.NumberToFlush()>0:
+                n+=1
+        return n
     def NumberToFlush(self):
         n=0
         for bank in self.DataBanks:
             n+=bank.NumberToFlush()
         return n
     def Flush(self):
+        #If data packer has no banks... do nothing
         if len(self.DataBanks)==0:
             return
+        #If data packer has one bank, flush it
         if len(self.DataBanks)==1:
             return self.DataBanks[0].Flush()
-        
+        #If data packer only has one bank type to flush... flush it
+        if self.UniqueToFlush()==1:
+            for bank in DataBanks:
+                if bank.NumberToFlush() > 0:
+                   return bank.Flush()
+        #If data packer has many banks to flush, put them in a superbank
+        print("Building super bank")
+        lump=b''
+        number_of_banks=0
+        for bank in self.DataBanks:
+            n_to_flush=bank.NumberToFlush()
+            if n_to_flush == 0:
+                continue
+            bank=bank.Flush()
+            lump=struct.pack('{}s{}s'.format(len(lump),len(bank)),lump,bank)
+            number_of_banks+=1
+        super_bank=struct.pack('4sii{}s'.format(len(lump)),b"PYA1",len(lump),number_of_banks,lump)
+        return super_bank
 
+    #Main (forever) loop for flushing the queues... run as its own thread
     def Run(self,sleep_time=1):
         #  Do 10 requests, waiting each time for a response
         while True:
@@ -81,9 +107,12 @@ class DataPacker:
             else:
                 print("Nothing to flush")
             time.sleep(sleep_time)
+    #Early prototype for passing messages to MIDAS... 
     def AddMessage(self, message):
         if len(message)<30:
+			#Short messages can use the 32 characters inside the header
             "MSGS" #message short
+            #Messages more than 32 characters will have a character array
             "MSGL" #message long
 
 
@@ -100,7 +129,6 @@ class DataBank:
         self.VARNAME=varname
         self.EQTYPE=eqtype
     def AddData(self,timestamp,data):
-		
         print("Adding data to bank")
         print(self.LVDATA.format(len(data)))
         lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,*data)
@@ -117,13 +145,14 @@ class DataBank:
             n+=len(bank)
         return n
     def Flush(self):
+        self.r.acquire()
         if len(self.DataList) == 0:
             print("Nothing in DataList to flush")
+            self.r.release()
             return
         print("Flushing")
         print("Banks to flush:" + str(self.NumberToFlush() ) + " Data length:" + str(self.DataLengthOfAllBank()))
         #unfold data in DataList list
-        self.r.acquire()
         block_size=len(self.DataList[0])
         num_blocks=len(self.DataList)
         lump=b''
@@ -142,23 +171,23 @@ class DataBank:
                                         lump)
         return BANK
 
+#Global data packer
+packer=DataPacker("alphadaq")
+
 class SimulateData:
-    def __init__(self):
-        self.packer=DataPacker("alphadaq")
-    def Simulate(self, wait_time=1):
+    def __init__(self,category,varname):
+        self.category=category
+        self.varname=varname
+    def GenerateData(self, wait_time=1):
         data=struct.pack('5d',0.1,0.2,0.3,0.4,0.5)
         print("Adding data")
-        self.packer.AddData(b"CatchingTrap",b"Temperature",GetLVTimeNow(),data)
+        packer.AddData(self.category,self.varname,GetLVTimeNow(),data)
         time.sleep(wait_time)
 
 
-s=SimulateData()
-#t1 = threading.Thread(target=s.packer.Run(1))
-#t2 = threading.Thread(target=s.Simulate())
+ct_t=SimulateData(b"CatchingTrap",b"Temperature")
+at_p=SimulateData(b"AtomTrap",b"Pressure")
 for i in range(10):
-   s.Simulate(0.1)
-s.Simulate()
-s.packer.NumberToFlush()
-#s.packer.Flush()
-
-
+   ct_t.GenerateData(0.1)
+   at_p.GenerateData(0.1)
+ct_t.GenerateData()
