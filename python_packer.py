@@ -1,6 +1,6 @@
 
 import sys
-
+import threading
 import zmq
 #LVDATA='ll%s'
 import time
@@ -44,7 +44,7 @@ class DataPacker:
             TYPE="INT3"
         self.DataBanks.append(DataBank(b"DBLE",catagory,varname,b"EquipmentType"))
         self.AddData(catagory, varname, timestamp, data)
-    def __init__(self, experiment):
+    def __init__(self, experiment, flush_time=1):
         self.DataBanks=[]
         context = zmq.Context()
         #  Socket to talk to server
@@ -52,6 +52,9 @@ class DataPacker:
         socket = context.socket(zmq.REQ)
         socket.connect("tcp://localhost:5555")
         print("Connection made...")
+        t = threading.Thread(target=self.Run,args=(flush_time,))
+        t.start()
+        print("Polling thread launched")
     def NumberToFlush(self):
         n=0
         for bank in self.DataBanks:
@@ -64,14 +67,24 @@ class DataPacker:
             return self.DataBanks[0].Flush()
         
 
-    def Run(self):
+    def Run(self,sleep_time=1):
         #  Do 10 requests, waiting each time for a response
-        for request in range(10):
-            print("Sending request %s …" % request)
-            socket.send(b"Hello")
-            #  Get the reply.
-            message = socket.recv()
-            print("Received reply %s [ %s ]" % (request, message))
+        while True:
+            n=self.NumberToFlush()
+            if n > 0:
+                Bundle=self.Flush()
+                print("Sending " +str(n) +" data bundles...")
+                #socket.send(b"Hello")
+                #  Get the reply.
+                #message = socket.recv()
+                #print("Received reply [ %s ]" % message)
+            else:
+                print("Nothing to flush")
+            time.sleep(sleep_time)
+    def AddMessage(self, message):
+        if len(message)<30:
+            "MSGS" #message short
+            "MSGL" #message long
 
 
 
@@ -79,6 +92,7 @@ class DataBank:
     LVBANK='4s4s16s16s32siiii{}s'
     LVDATA='8s{}d'
     DataList=[]
+    r = threading.RLock()
     def __init__(self, datatype, catagory, varname,eqtype):
         self.BANK=b"PYB1"
         self.DATATYPE=datatype
@@ -86,10 +100,15 @@ class DataBank:
         self.VARNAME=varname
         self.EQTYPE=eqtype
     def AddData(self,timestamp,data):
+		
         print("Adding data to bank")
         print(self.LVDATA.format(len(data)))
         lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,*data)
+        if len(self.DataList) > 0:
+             assert len(self.DataList[0]) == len(lvdata)
+        self.r.acquire()
         self.DataList.append(lvdata)
+        self.r.release()
     def NumberToFlush(self):
         return len(self.DataList)
     def DataLengthOfAllBank(self):
@@ -103,26 +122,23 @@ class DataBank:
             return
         print("Flushing")
         print("Banks to flush:" + str(self.NumberToFlush() ) + " Data length:" + str(self.DataLengthOfAllBank()))
+        #unfold data in DataList list
+        self.r.acquire()
+        block_size=len(self.DataList[0])
+        num_blocks=len(self.DataList)
         lump=b''
         for data in self.DataList:
             lump=struct.pack('{}s{}s'.format(len(lump),len(data)),lump,data)
+        self.DataList.clear()
+        self.r.release()
         print("lump length:"+str(len(lump)))
-        #'4s4s
-        #16s
-        #16s
-        #32s
-        #ii
-        #ii
-        #{}s'
-        print(self.LVBANK.format(len(lump)))
-        BANK=struct.pack('i{}s'.format(len(lump)),len(self.DataList[0]),lump)
         BANK=struct.pack(self.LVBANK.format(len(lump)),
                                         self.BANK,self.DATATYPE,
                                         self.VARCATAGORY,
                                         self.VARNAME,
                                         self.EQTYPE,
                                         1,0,
-                                        len(self.DataList[0]),len(self.DataList),
+                                        block_size,num_blocks,
                                         lump)
         return BANK
 
@@ -132,15 +148,19 @@ class SimulateData:
     def Simulate(self):
         data=struct.pack('5d',0.1,0.2,0.3,0.4,0.5)
         self.packer.Flush()
+        print("Adding data")
         self.packer.AddData(b"CatchingTrap",b"Temperature",GetLVTimeNow(),data)
         time.sleep(1)
 
 
 s=SimulateData()
+#t1 = threading.Thread(target=s.packer.Run(1))
+#t2 = threading.Thread(target=s.Simulate())
+
 s.Simulate()
 s.Simulate()
 s.packer.NumberToFlush()
-s.packer.Flush()
+#s.packer.Flush()
 
 
 
