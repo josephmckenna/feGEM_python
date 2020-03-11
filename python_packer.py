@@ -145,65 +145,20 @@ class DataBank:
 class SimulateData:
     def __init__(self):
         self.packer=DataPacker("alphadaq")
-    def Simulate(self):
+    def Simulate(self, wait_time=1):
         data=struct.pack('5d',0.1,0.2,0.3,0.4,0.5)
-        self.packer.Flush()
         print("Adding data")
         self.packer.AddData(b"CatchingTrap",b"Temperature",GetLVTimeNow(),data)
-        time.sleep(1)
+        time.sleep(wait_time)
 
 
 s=SimulateData()
 #t1 = threading.Thread(target=s.packer.Run(1))
 #t2 = threading.Thread(target=s.Simulate())
-
-s.Simulate()
+for i in range(10):
+   s.Simulate(0.1)
 s.Simulate()
 s.packer.NumberToFlush()
 #s.packer.Flush()
 
 
-
-'''
-uint64_t LVStyleUnixTime
-uint64_t LVPrecision
-char data[]
-'''
-
-'''
-BANK(4x char)            DATATYPE(4x char)
-VAR CATAGORY (16x char)
-
-VAR NAME (16x char)
-
-Equipment Type (32x char)
-
-
-
-History Rate (uint32_t)   HASH?
-Data Length (uint32_t)   Number of Entries (uint32_t)
-LVDATA data[]
-'''
-
-'''
-array=b"Elong array of stuffE"
-
-lump=struct.pack(LVDATA.format(len(array)) ,1,2,array)
-len(lump)
-struct.unpack(LVDATA.format(len(array)),lump)
-
-BANKNAME=b"BANK"
-DATATYPE=b"CHAR"
-VARCATAGORY=b"Catagory"
-VARNAME=b"VariableName"
-EQTYPE=b"Equipment Type"
-
-BANK=struct.pack('4s4s16s16s32siiii{}s'.format(len(lump)),
-                                        BANKNAME,DATATYPE,
-                                        VARCATAGORY,
-                                        VARNAME,
-                                        EQTYPE,
-                                        1,0,
-                                        len(lump),1,
-                                        lump)
-'''
