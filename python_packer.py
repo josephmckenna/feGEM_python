@@ -46,11 +46,11 @@ class DataPacker:
         self.AddData(catagory, varname, timestamp, data)
     def __init__(self, experiment, flush_time=1):
         self.DataBanks=[]
-        context = zmq.Context()
+        self.context = zmq.Context()
         #  Socket to talk to server
         print("Connecting to MIDAS server…")
-        socket = context.socket(zmq.REQ)
-        socket.connect("tcp://localhost:5555")
+        self.socket = self.context.socket(zmq.REQ)
+        self.socket.connect("tcp://localhost:5555")
         print("Connection made...")
         t = threading.Thread(target=self.Run,args=(flush_time,))
         t.start()
@@ -75,7 +75,7 @@ class DataPacker:
             return self.DataBanks[0].Flush()
         #If data packer only has one bank type to flush... flush it
         if self.UniqueToFlush()==1:
-            for bank in DataBanks:
+            for bank in self.DataBanks:
                 if bank.NumberToFlush() > 0:
                    return bank.Flush()
         #If data packer has many banks to flush, put them in a superbank
@@ -89,7 +89,12 @@ class DataPacker:
             bank=bank.Flush()
             lump=struct.pack('{}s{}s'.format(len(lump),len(bank)),lump,bank)
             number_of_banks+=1
-        super_bank=struct.pack('4sii{}s'.format(len(lump)),b"PYA1",len(lump),number_of_banks,lump)
+        super_bank=struct.pack('4sII{}s'.format(len(lump)),
+                                        b"PYA1",
+                                        len(lump),
+                                        number_of_banks,
+                                        lump)
+        print("Size of lump in super bank:"+str(len(lump))+"("+str(number_of_banks)+" banks)")
         return super_bank
 
     #Main (forever) loop for flushing the queues... run as its own thread
@@ -100,10 +105,14 @@ class DataPacker:
             if n > 0:
                 Bundle=self.Flush()
                 print("Sending " +str(n) +" data bundles...")
-                #socket.send(b"Hello")
+                self.socket.send(Bundle)
+                print("Sent...")
                 #  Get the reply.
-                #message = socket.recv()
-                #print("Received reply [ %s ]" % message)
+                message = self.socket.recv()
+                print("Received reply [ %s ]" % message)
+                if message[0:5]==b"ERROR":
+                    print("ERROR reported from MIDAS! FATAL!")
+                    exit(1)
             else:
                 print("Nothing to flush")
             time.sleep(sleep_time)
@@ -129,8 +138,8 @@ class DataBank:
         self.VARNAME=varname
         self.EQTYPE=eqtype
     def AddData(self,timestamp,data):
-        print("Adding data to bank")
-        print(self.LVDATA.format(len(data)))
+        #print("Adding data to bank")
+        #print(self.LVDATA.format(len(data)))
         lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,*data)
         if len(self.DataList) > 0:
              assert len(self.DataList[0]) == len(lvdata)
@@ -159,6 +168,7 @@ class DataBank:
         for data in self.DataList:
             lump=struct.pack('{}s{}s'.format(len(lump),len(data)),lump,data)
         self.DataList.clear()
+        self.DataList=[]
         self.r.release()
         print("lump length:"+str(len(lump)))
         BANK=struct.pack(self.LVBANK.format(len(lump)),
@@ -180,7 +190,7 @@ class SimulateData:
         self.varname=varname
     def GenerateData(self, wait_time=1):
         data=struct.pack('5d',0.1,0.2,0.3,0.4,0.5)
-        print("Adding data")
+        #print("Adding data")
         packer.AddData(self.category,self.varname,GetLVTimeNow(),data)
         time.sleep(wait_time)
 
@@ -188,6 +198,8 @@ class SimulateData:
 ct_t=SimulateData(b"CatchingTrap",b"Temperature")
 at_p=SimulateData(b"AtomTrap",b"Pressure")
 for i in range(10):
-   ct_t.GenerateData(0.1)
-   at_p.GenerateData(0.1)
-ct_t.GenerateData()
+   ct_t.GenerateData(0.0001)
+   at_p.GenerateData(1)
+ct_t.GenerateData(1)
+ct_t.GenerateData(1)
+ct_t.GenerateData(1)
