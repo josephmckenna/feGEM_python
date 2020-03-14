@@ -89,8 +89,9 @@ class DataPacker:
             bank=bank.Flush()
             lump=struct.pack('{}s{}s'.format(len(lump),len(bank)),lump,bank)
             number_of_banks+=1
-        super_bank=struct.pack('4sII{}s'.format(len(lump)),
+        super_bank=struct.pack('4s4sII{}s'.format(len(lump)),
                                         b"PYA1",
+                                        b"PADD",
                                         len(lump),
                                         number_of_banks,
                                         lump)
