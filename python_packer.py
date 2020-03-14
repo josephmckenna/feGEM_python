@@ -128,7 +128,7 @@ class DataPacker:
 
 class DataBank:
     LVBANK='4s4s16s16s32siiii{}s'
-    LVDATA='8s{}d'
+    LVDATA='16s{}s'
     DataList=[]
     r = threading.RLock()
     def __init__(self, datatype, catagory, varname,eqtype):
@@ -140,7 +140,7 @@ class DataBank:
     def AddData(self,timestamp,data):
         #print("Adding data to bank")
         #print(self.LVDATA.format(len(data)))
-        lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,*data)
+        lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,data)
         if len(self.DataList) > 0:
              assert len(self.DataList[0]) == len(lvdata)
         self.r.acquire()
