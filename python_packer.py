@@ -105,7 +105,7 @@ class DataPacker:
             n=self.NumberToFlush()
             if n > 0:
                 Bundle=self.Flush()
-                print("Sending " +str(n) +" data bundles...")
+                print("Sending " +str(n) +" data bundles ("+str(len(Bundle)) +" bytes)...")
                 self.socket.send(Bundle)
                 print("Sent...")
                 #  Get the reply.
@@ -120,7 +120,7 @@ class DataPacker:
     #Early prototype for passing messages to MIDAS... 
     def AddMessage(self, message):
         if len(message)<30:
-			#Short messages can use the 32 characters inside the header
+            #Short messages can use the 32 characters inside the header
             "MSGS" #message short
             #Messages more than 32 characters will have a character array
             "MSGL" #message long
@@ -200,7 +200,7 @@ ct_t=SimulateData(b"CatchingTrap",b"Temperature")
 at_p=SimulateData(b"AtomTrap",b"Pressure")
 for i in range(10):
    ct_t.GenerateData(0.0001)
-   at_p.GenerateData(1)
+   at_p.GenerateData(0.0001)
 ct_t.GenerateData(1)
 ct_t.GenerateData(1)
 ct_t.GenerateData(1)
