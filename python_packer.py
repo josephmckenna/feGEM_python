@@ -4,7 +4,7 @@ import threading
 import zmq
 #LVDATA='ll%s'
 import time
-
+import socket
 import struct
 import datetime
 def GetLVTimeNow():
@@ -52,6 +52,16 @@ class DataPacker:
         self.socket = self.context.socket(zmq.REQ)
         self.socket.connect("tcp://localhost:5555")
         print("Connection made...")
+        print("Requesting to start logging")
+        start_string=b"START_FRONTEND "+bytes(socket.gethostname(),'utf8')
+        self.socket.send(start_string)
+        response=self.socket.recv()
+        get_addr=b"GIVE_ME_ADDRESS  "+bytes(socket.gethostname(),'utf8')
+        self.socket.send(get_addr)
+        address=self.socket.recv()
+        print("Logging to address:"+address.decode("utf-8") )
+        self.socket.disconnect("tcp://localhost:5555")
+        self.socket.connect(address)
         t = threading.Thread(target=self.Run,args=(flush_time,))
         t.start()
         print("Polling thread launched")
@@ -198,9 +208,13 @@ class SimulateData:
 
 ct_t=SimulateData(b"CatchingTrap",b"Temperature")
 at_p=SimulateData(b"AtomTrap",b"Pressure")
-for i in range(10):
-   ct_t.GenerateData(0.0001)
-   at_p.GenerateData(0.0001)
-ct_t.GenerateData(1)
-ct_t.GenerateData(1)
-ct_t.GenerateData(1)
+while True:
+   for i in range(10000):
+      ct_t.GenerateData(0.0001)
+      at_p.GenerateData(0.0001)
+   for i in range(10000):
+      ct_t.GenerateData(0.0001)
+   
+#ct_t.GenerateData(1)
+#ct_t.GenerateData(1)
+#ct_t.GenerateData(1)
