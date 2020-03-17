@@ -50,7 +50,7 @@ class DataPacker:
         #  Socket to talk to server
         print("Connecting to MIDAS server…")
         self.socket = self.context.socket(zmq.REQ)
-        self.socket.connect("tcp://localhost:5555")
+        self.socket.connect("tcp://"+experiment+":5555")
         print("Connection made...")
         print("Requesting to start logging")
         start_string=b"START_FRONTEND "+bytes(socket.gethostname(),'utf8')
@@ -60,7 +60,7 @@ class DataPacker:
         self.socket.send(get_addr)
         address=self.socket.recv()
         print("Logging to address:"+address.decode("utf-8") )
-        self.socket.disconnect("tcp://localhost:5555")
+        self.socket.disconnect("tcp://"+experiment+":5555")
         self.socket.connect(address)
         t = threading.Thread(target=self.Run,args=(flush_time,))
         t.start()
@@ -193,7 +193,7 @@ class DataBank:
         return BANK
 
 #Global data packer
-packer=DataPacker("alphadaq")
+packer=DataPacker("alphamidastest8")
 
 class SimulateData:
     def __init__(self,category,varname):
