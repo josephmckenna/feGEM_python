@@ -187,7 +187,7 @@ class DataBank:
                                         self.VARCATAGORY,
                                         self.VARNAME,
                                         self.EQTYPE,
-                                        1,0,
+                                        1,2,
                                         block_size,num_blocks,
                                         lump)
         return BANK
@@ -211,7 +211,7 @@ at_p=SimulateData(b"AtomTrap",b"Pressure")
 while True:
    for i in range(10000):
       ct_t.GenerateData(0.0001)
-      at_p.GenerateData(0.0001)
+      #at_p.GenerateData(0.0001)
    for i in range(10000):
       ct_t.GenerateData(0.0001)
    
