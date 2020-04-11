@@ -7,6 +7,10 @@ import time
 import socket
 import struct
 import datetime
+
+from array import array
+import json
+
 def GetLVTimeNow():
     #Get UNIX time now
     lvtime=datetime.datetime.utcnow().timestamp()
@@ -28,27 +32,42 @@ def GetUnixTimeFromLVTime(timestamp):
 
 class DataPacker:
     """I have list of DataBanks"""
-    TYPE="NULL"
+    RunNumber=-1
+    PeriodicTasks=list()
     def AddData(self, catagory, varname, timestamp, data):
         for bank in self.DataBanks:
             if bank.VARCATAGORY==catagory and bank.VARNAME==varname:
+                bank.print()
                 bank.AddData(timestamp,data)
                 return
         #Matching bank not found in list... add this new bank to DataBanks list
-
-        if type(data) is float:
-            assert sys.float_info.mant_dig==53
-            TYPE="DBLE"
-        if type(data) is int:
-            assert sys.int_info.bits_per_digit==30
-            TYPE="INT3"
-        self.DataBanks.append(DataBank(b"DBLE",catagory,varname,b"EquipmentType"))
+        TYPE=b"NULL"
+        #https://docs.python.org/3/library/array.html
+        if isinstance(data,array):
+           if data.typecode == 'd':
+              TYPE=b"DBL\0"
+           if data.typecode == 'l':
+              TYPE=b"I32\0"
+           #if data.typecode == 'b':
+           #   TYPE=b"STR\0"
+        if isinstance(data,str):
+           TYPE=b"STR\0"
+        self.DataBanks.append(DataBank(TYPE,catagory,varname,b"EquipmentType"))
         self.AddData(catagory, varname, timestamp, data)
+    def GetRunNumber(self):
+        #Launch the periodic task
+        if "GET_RUNNO" not in self.PeriodicTasks:
+           self.PeriodicTasks.append("GET_RUNNO")
+        #Wait until we have a valid RunNumber (happens on first call only)
+        while self.RunNumber < 0:
+           timer.sleep(0.1)
+        return self.RunNumber
+
     def __init__(self, experiment, flush_time=1):
         self.DataBanks=[]
         self.context = zmq.Context()
         #  Socket to talk to server
-        print("Connecting to MIDAS server…")
+        print("Connecting to MIDAS server...")
         self.socket = self.context.socket(zmq.REQ)
         self.socket.connect("tcp://"+experiment+":5555")
         print("Connection made...")
@@ -62,6 +81,12 @@ class DataPacker:
         print("Logging to address:"+address.decode("utf-8") )
         self.socket.disconnect("tcp://"+experiment+":5555")
         self.socket.connect(address)
+        get_event_size=b"GIVE_ME_EVENT_SIZE"
+        self.socket.send(get_event_size)
+        EventSize=self.socket.recv()
+        #Trim text before :, and remove all ' marks... ie get the integer out of the string
+        self.MaxEventSize=int((str(EventSize).split(':')[1].replace('\'','')))
+        print("MaxEventSize:"+str(self.MaxEventSize))
         t = threading.Thread(target=self.Run,args=(flush_time,))
         t.start()
         print("Polling thread launched")
@@ -106,12 +131,26 @@ class DataPacker:
                                         number_of_banks,
                                         lump)
         print("Size of lump in super bank:"+str(len(lump))+"("+str(number_of_banks)+" banks)")
+        #You are about to send more data the MIDAS is ready to handle... throw an error! Increase the event_size in the ODB!
+        assert(len(lump)<self.MaxEventSize)
         return super_bank
+    def HandleReply(self, reply):
+        ReplyList=json.loads(reply)
+        HaveRunno=[i for i, s in enumerate(ReplyList) if 'RunNumber:' in str(s)]
+        for pos in HaveRunno:
+            self.RunNumber=int(str(ReplyList[pos]).split(':')[1].replace('\'',''))
+        HaveMsg=[i for i, s in enumerate(ReplyList) if 'Msg:' in str(s)]
+        for msg in HaveMsg:
+            print(ReplyList[msg])
+        
 
     #Main (forever) loop for flushing the queues... run as its own thread
     def Run(self,sleep_time=1):
         #  Do 10 requests, waiting each time for a response
         while True:
+            #Execute periodic tasks (RunNumber tracking etc)
+            for task in self.PeriodicTasks:
+                self.AddData(b"PERIODIC",bytes(task,'utf-8'),GetLVTimeNow(),str("\0"))
             n=self.NumberToFlush()
             if n > 0:
                 Bundle=self.Flush()
@@ -121,12 +160,14 @@ class DataPacker:
                 #  Get the reply.
                 message = self.socket.recv()
                 print("Received reply [ %s ]" % message)
+                self.HandleReply(message)
                 if message[0:5]==b"ERROR":
                     print("ERROR reported from MIDAS! FATAL!")
                     exit(1)
             else:
                 print("Nothing to flush")
             time.sleep(sleep_time)
+    
     #Early prototype for passing messages to MIDAS... 
     def AddMessage(self, message):
         if len(message)<30:
@@ -140,20 +181,36 @@ class DataPacker:
 class DataBank:
     LVBANK='4s4s16s16s32siiii{}s'
     LVDATA='16s{}s'
-    DataList=[]
     r = threading.RLock()
     def __init__(self, datatype, catagory, varname,eqtype):
         self.BANK=b"PYB1"
+        assert(isinstance(datatype,bytes))
         self.DATATYPE=datatype
+        assert(isinstance(catagory,bytes))
         self.VARCATAGORY=catagory
+        assert(isinstance(varname,bytes))
         self.VARNAME=varname
+        assert(isinstance(eqtype,bytes))
         self.EQTYPE=eqtype
+        self.DataList=[]
+    def print(self):
+        print("BANK:"+str(self.BANK))
+        print("TYPE:"+str(self.DATATYPE))
+        print("CATEGORY:"+str(self.VARCATAGORY))
+        print("VARNAME:"+str(self.VARNAME))
+        print("EQTYPE:"+str(self.EQTYPE))
+        print("Datalist size:"+str(len(self.DataList)))
+        if (len(self.DataList)):
+           print("LVDATA size:"+str(len(self.DataList[0])))
     def AddData(self,timestamp,data):
-        #print("Adding data to bank")
-        #print(self.LVDATA.format(len(data)))
-        lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,data)
+        print("Adding data to bank")
+        print(self.LVDATA.format(len(data)))
+        lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,bytearray(str(data), 'utf-8'))
+        #lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,array.tobytes(data))
         if len(self.DataList) > 0:
-             assert len(self.DataList[0]) == len(lvdata)
+            print(len(self.DataList[0]))
+            print(len(lvdata))
+            assert len(self.DataList[0]) == len(lvdata)
         self.r.acquire()
         self.DataList.append(lvdata)
         self.r.release()
@@ -177,11 +234,11 @@ class DataBank:
         num_blocks=len(self.DataList)
         lump=b''
         for data in self.DataList:
-            lump=struct.pack('{}s{}s'.format(len(lump),len(data)),lump,data)
+           lump=struct.pack('{}s{}s'.format(len(lump),len(data)),lump,data)
+        #self.print()
         self.DataList.clear()
         self.DataList=[]
         self.r.release()
-        print("lump length:"+str(len(lump)))
         BANK=struct.pack(self.LVBANK.format(len(lump)),
                                         self.BANK,self.DATATYPE,
                                         self.VARCATAGORY,
@@ -195,25 +252,29 @@ class DataBank:
 #Global data packer
 packer=DataPacker("alphamidastest8")
 
+
+
 class SimulateData:
     def __init__(self,category,varname):
         self.category=category
         self.varname=varname
     def GenerateData(self, wait_time=1):
-        data=struct.pack('5d',0.1,0.2,0.3,0.4,0.5)
+        #data=struct.pack('10d',0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0)
         #print("Adding data")
-        packer.AddData(self.category,self.varname,GetLVTimeNow(),data)
+        packer.AddData(self.category,self.varname,GetLVTimeNow(),array('d',[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]))
         time.sleep(wait_time)
-
-
+a=packer.GetRunNumber()
+print(a)
 ct_t=SimulateData(b"CatchingTrap",b"Temperature")
 at_p=SimulateData(b"AtomTrap",b"Pressure")
+time.sleep(15)
 while True:
    for i in range(10000):
-      ct_t.GenerateData(0.0001)
+      #ct_t.GenerateData(0.0001)
+      ct_t.GenerateData(1)
       #at_p.GenerateData(0.0001)
    for i in range(10000):
-      ct_t.GenerateData(0.0001)
+      at_p.GenerateData(1)
    
 #ct_t.GenerateData(1)
 #ct_t.GenerateData(1)
