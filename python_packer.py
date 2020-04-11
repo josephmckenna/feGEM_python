@@ -33,36 +33,8 @@ def GetUnixTimeFromLVTime(timestamp):
 class DataPacker:
     """I have list of DataBanks"""
     RunNumber=-1
+    RunStatus=""
     PeriodicTasks=list()
-    def AddData(self, catagory, varname, timestamp, data):
-        for bank in self.DataBanks:
-            if bank.VARCATAGORY==catagory and bank.VARNAME==varname:
-                bank.print()
-                bank.AddData(timestamp,data)
-                return
-        #Matching bank not found in list... add this new bank to DataBanks list
-        TYPE=b"NULL"
-        #https://docs.python.org/3/library/array.html
-        if isinstance(data,array):
-           if data.typecode == 'd':
-              TYPE=b"DBL\0"
-           if data.typecode == 'l':
-              TYPE=b"I32\0"
-           #if data.typecode == 'b':
-           #   TYPE=b"STR\0"
-        if isinstance(data,str):
-           TYPE=b"STR\0"
-        self.DataBanks.append(DataBank(TYPE,catagory,varname,b"EquipmentType"))
-        self.AddData(catagory, varname, timestamp, data)
-    def GetRunNumber(self):
-        #Launch the periodic task
-        if "GET_RUNNO" not in self.PeriodicTasks:
-           self.PeriodicTasks.append("GET_RUNNO")
-        #Wait until we have a valid RunNumber (happens on first call only)
-        while self.RunNumber < 0:
-           timer.sleep(0.1)
-        return self.RunNumber
-
     def __init__(self, experiment, flush_time=1):
         self.DataBanks=[]
         self.context = zmq.Context()
@@ -90,6 +62,42 @@ class DataPacker:
         t = threading.Thread(target=self.Run,args=(flush_time,))
         t.start()
         print("Polling thread launched")
+    def AddData(self, catagory, varname, timestamp, data):
+        for bank in self.DataBanks:
+            if bank.VARCATAGORY==catagory and bank.VARNAME==varname:
+                #bank.print()
+                bank.AddData(timestamp,data)
+                return
+        #Matching bank not found in list... add this new bank to DataBanks list
+        TYPE=b"NULL"
+        #https://docs.python.org/3/library/array.html
+        if isinstance(data,array):
+           if data.typecode == 'd':
+              TYPE=b"DBL\0"
+           if data.typecode == 'l':
+              TYPE=b"I32\0"
+           #if data.typecode == 'b':
+           #   TYPE=b"STR\0"
+        if isinstance(data,str):
+           TYPE=b"STR\0"
+        self.DataBanks.append(DataBank(TYPE,catagory,varname,b"EquipmentType"))
+        self.AddData(catagory, varname, timestamp, data)
+    def AddPeriodicTask(self,task):
+        if task not in self.PeriodicTasks:
+            self.PeriodicTasks.append(task)
+    def GetRunNumber(self):
+        #Launch the periodic task to track the RunNumber
+        self.AddPeriodicTask("GET_RUNNO")
+        #Wait until we have a valid RunNumber (happens on first call only)
+        while self.RunNumber < 0:
+           time.sleep(0.1)
+        return self.RunNumber
+    def GetRunStatus(self):
+        #Launch the peridoc task to track Run Status
+        self.AddPeriodicTask("GET_STATUS")
+        while len(self.RunStatus) == 0:
+            time.sleep(0.1)
+        return self.RunStatus
     def UniqueToFlush(self):
         n=0
         for bank in self.DataBanks:
@@ -136,9 +144,12 @@ class DataPacker:
         return super_bank
     def HandleReply(self, reply):
         ReplyList=json.loads(reply)
-        HaveRunno=[i for i, s in enumerate(ReplyList) if 'RunNumber:' in str(s)]
-        for pos in HaveRunno:
+        RunnoList=[i for i, s in enumerate(ReplyList) if 'RunNumber:' in str(s)]
+        for pos in RunnoList:
             self.RunNumber=int(str(ReplyList[pos]).split(':')[1].replace('\'',''))
+        StatusList=[i for i, s in enumerate(ReplyList) if 'RunStatus:' in str(s)]
+        for pos in StatusList:
+            self.RunStatus=str(ReplyList[pos]).split(':')[1].replace('\'','')
         HaveMsg=[i for i, s in enumerate(ReplyList) if 'Msg:' in str(s)]
         for msg in HaveMsg:
             print(ReplyList[msg])
@@ -203,8 +214,7 @@ class DataBank:
         if (len(self.DataList)):
            print("LVDATA size:"+str(len(self.DataList[0])))
     def AddData(self,timestamp,data):
-        print("Adding data to bank")
-        print(self.LVDATA.format(len(data)))
+        #print("Adding data to bank")
         lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,bytearray(str(data), 'utf-8'))
         #lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,array.tobytes(data))
         if len(self.DataList) > 0:
@@ -263,8 +273,9 @@ class SimulateData:
         #print("Adding data")
         packer.AddData(self.category,self.varname,GetLVTimeNow(),array('d',[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]))
         time.sleep(wait_time)
-a=packer.GetRunNumber()
-print(a)
+print("Current Run Number: "+str(packer.GetRunNumber()))
+print("Current Run Status: "+str(packer.GetRunStatus()))
+
 ct_t=SimulateData(b"CatchingTrap",b"Temperature")
 at_p=SimulateData(b"AtomTrap",b"Pressure")
 time.sleep(15)
