@@ -20,6 +20,8 @@ except:
     HaveNumpy=False
     print("Numpy not found... thats ok, but you can only use python arrays for data")
 
+
+"""Timestamp functions"""
 def GetLVTimeNow():
     #Get UNIX time now
     lvtime=datetime.datetime.utcnow().timestamp()
@@ -39,6 +41,7 @@ def GetUnixTimeFromLVTime(timestamp):
     UnixTime-=2082844800
     return UnixTime
 
+"""Array type parsing functions"""
 def GetArrayType(arg):
     switcher = {
         'd' : b"DBL\0" ,
@@ -57,7 +60,6 @@ def GetNpArrayType(arg):
     }
     return switcher.get(arg,"Unsupported numpy array type ("+str(arg)+")... consider using floats?")
 
-
 #I only support list of doubles!
 def GetListType(arg):
     switcher = {
@@ -65,12 +67,12 @@ def GetListType(arg):
         #b"I64\0": int,
     }
     return switcher.get(arg,"Unsupported list type ("+str(arg)+")... consider using floats?")
-           
 
+"""Main DataPacker Object... use it as a global object, its thread safe"""
 class DataPacker:
     """I have list of DataBanks"""
     RunNumber=-1
-    RunStatus=""
+    RunStatus=str()
     PeriodicTasks=list()
     def __init__(self, experiment, flush_time=1):
         self.DataBanks=[]
@@ -200,7 +202,7 @@ class DataPacker:
         RunnoList=[i for i, s in enumerate(ReplyList) if 'RunNumber:' in str(s)]
         for pos in RunnoList:
             self.RunNumber=int(str(ReplyList[pos]).split(':')[1].replace('\'',''))
-        StatusList=[i for i, s in enumerate(ReplyList) if 'RunStatus:' in str(s)]
+        StatusList=[i for i, s in enumerate(ReplyList) if 'STATUS:' in str(s)]
         for pos in StatusList:
             self.RunStatus=str(ReplyList[pos]).split(':')[1].replace('\'','')
         HaveMsg=[i for i, s in enumerate(ReplyList) if 'Msg:' in str(s)]
@@ -336,8 +338,8 @@ class SimulateData:
         packer.AddData(self.category,self.varname,self.description,GetLVTimeNow(),[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0])
         time.sleep(wait_time)
 
-#print("Current Run Number: "+str(packer.GetRunNumber()))
-#print("Current Run Status: "+str(packer.GetRunStatus()))
+print("Current Run Number: "+str(packer.GetRunNumber()))
+print("Current Run Status: "+str(packer.GetRunStatus()))
 
 ct_a=SimulateData(b"CatchingTrap",b"Array",b"PythonSimulation")
 ct_np=SimulateData(b"CatchingTrap",b"NpArray",b"PythonSimulation")
