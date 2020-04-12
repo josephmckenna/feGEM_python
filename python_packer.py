@@ -11,6 +11,8 @@ import datetime
 from array import array
 import json
 
+
+
 def GetLVTimeNow():
     #Get UNIX time now
     lvtime=datetime.datetime.utcnow().timestamp()
@@ -63,23 +65,33 @@ class DataPacker:
         t.start()
         print("Polling thread launched")
     def AddData(self, catagory, varname, timestamp, data):
+        #Matching bank not found in list... add this new bank to DataBanks list
+        TYPE=b"NULL"
+        #https://docs.python.org/3/library/array.html
+        if isinstance(data,array):
+            if data.typecode == 'd':
+                TYPE=b"DBL\0"
+            if data.typecode == 'f':
+                TYPE=b"FLT\0"
+            elif data.typecode == 'l':
+                TYPE=b"I32\0"
+            elif data.typecode == 'L':
+                TYPE=b"U32\0"
+            #Data need to be encoded as bytes... convert now
+            data=data.tobytes()
+        elif isinstance(data,str):
+            data=bytearray(str(data), 'utf-8')
+            TYPE=b"STR\0"
+        elif isinstance(data,bytearray) or isinstance(data,bytes):
+            TYPE=b"U8\0\0"
+        else:
+            print("Unsupported data format ("+str(type(data))+")... upgrade DataPacker!")
+            exit(1)
         for bank in self.DataBanks:
             if bank.VARCATAGORY==catagory and bank.VARNAME==varname:
                 #bank.print()
                 bank.AddData(timestamp,data)
                 return
-        #Matching bank not found in list... add this new bank to DataBanks list
-        TYPE=b"NULL"
-        #https://docs.python.org/3/library/array.html
-        if isinstance(data,array):
-           if data.typecode == 'd':
-              TYPE=b"DBL\0"
-           if data.typecode == 'l':
-              TYPE=b"I32\0"
-           #if data.typecode == 'b':
-           #   TYPE=b"STR\0"
-        if isinstance(data,str):
-           TYPE=b"STR\0"
         self.DataBanks.append(DataBank(TYPE,catagory,varname,b"EquipmentType"))
         self.AddData(catagory, varname, timestamp, data)
     def AddPeriodicTask(self,task):
@@ -215,11 +227,9 @@ class DataBank:
            print("LVDATA size:"+str(len(self.DataList[0])))
     def AddData(self,timestamp,data):
         #print("Adding data to bank")
-        lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,bytearray(str(data), 'utf-8'))
+        lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,data)
         #lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,array.tobytes(data))
         if len(self.DataList) > 0:
-            print(len(self.DataList[0]))
-            print(len(lvdata))
             assert len(self.DataList[0]) == len(lvdata)
         self.r.acquire()
         self.DataList.append(lvdata)
@@ -237,8 +247,8 @@ class DataBank:
             print("Nothing in DataList to flush")
             self.r.release()
             return
-        print("Flushing")
-        print("Banks to flush:" + str(self.NumberToFlush() ) + " Data length:" + str(self.DataLengthOfAllBank()))
+        #print("Flushing")
+        #print("Banks to flush:" + str(self.NumberToFlush() ) + " Data length:" + str(self.DataLengthOfAllBank()))
         #unfold data in DataList list
         block_size=len(self.DataList[0])
         num_blocks=len(self.DataList)
@@ -274,11 +284,11 @@ class SimulateData:
         packer.AddData(self.category,self.varname,GetLVTimeNow(),array('d',[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]))
         time.sleep(wait_time)
 print("Current Run Number: "+str(packer.GetRunNumber()))
-print("Current Run Status: "+str(packer.GetRunStatus()))
+#print("Current Run Status: "+str(packer.GetRunStatus()))
 
 ct_t=SimulateData(b"CatchingTrap",b"Temperature")
 at_p=SimulateData(b"AtomTrap",b"Pressure")
-time.sleep(15)
+#time.sleep(1)
 while True:
    for i in range(10000):
       #ct_t.GenerateData(0.0001)
