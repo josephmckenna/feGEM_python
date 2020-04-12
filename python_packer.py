@@ -1,16 +1,17 @@
-
+#Python 3 tool to log data to MIDAS (feLabVIEW)
 import sys
 import threading
 import zmq
-#LVDATA='ll%s'
 import time
 import socket
 import struct
 import datetime
 
-from array import array
 import json
 
+#Default behaviour is to use array as data type for logging...
+import array
+#Numpy is also supported
 try:
     import numpy as np
     HaveNumpy=True
@@ -18,8 +19,6 @@ try:
 except:
     HaveNumpy=False
     print("Numpy not found... thats ok, but you can only use python arrays for data")
-
-
 
 def GetLVTimeNow():
     #Get UNIX time now
@@ -77,9 +76,9 @@ class DataPacker:
         TYPE=b"NULL"
         #Convert any lists to an array
         if isinstance(data,list):
-            if type(data[0]) == 'float':
+            if isinstance(data[0],float):
                 TYPE=b"DBL\0"
-                data=array('d',data)
+                data=array.array('d',data)
             else:
                 print("Unsupported list type ("+str(type(data[0]))+")... add some more!")
                 exit(1)
@@ -94,9 +93,12 @@ class DataPacker:
                     TYPE=b"I32\0"
                 elif data.dtype == 'uint32':
                     TYPE=b"U32\0"
+                else:
+                    print("Unsupported numpy array type ("+data.dtype+")... add some more!")
+                    exit(1)
                 data=data.tobytes()
         #https://docs.python.org/3/library/array.html
-        if isinstance(data,array):
+        if isinstance(data,array.array):
             if data.typecode == 'd':
                 TYPE=b"DBL\0"
             elif data.typecode == 'f':
@@ -114,7 +116,8 @@ class DataPacker:
             data=bytearray(str(data), 'utf-8')
             TYPE=b"STR\0"
         elif isinstance(data,bytearray) or isinstance(data,bytes):
-            TYPE=b"U8\0\0"
+            if TYPE == b"NULL":
+               TYPE=b"U8\0\0"
         else:
             print("Unsupported data format ("+str(type(data))+")... upgrade DataPacker!")
             exit(1)
@@ -259,7 +262,6 @@ class DataBank:
     def AddData(self,timestamp,data):
         #print("Adding data to bank")
         lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,data)
-        #lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,array.tobytes(data))
         if len(self.DataList) > 0:
             assert len(self.DataList[0]) == len(lvdata)
         self.r.acquire()
@@ -280,12 +282,13 @@ class DataBank:
             return
         #print("Flushing")
         #print("Banks to flush:" + str(self.NumberToFlush() ) + " Data length:" + str(self.DataLengthOfAllBank()))
-        #unfold data in DataList list
-        block_size=len(self.DataList[0])
-        num_blocks=len(self.DataList)
         lump=b''
+        #Unfold data in DataList list
         for data in self.DataList:
            lump=struct.pack('{}s{}s'.format(len(lump),len(data)),lump,data)
+        #Dimensions of LVDATA in BANK
+        block_size=len(self.DataList[0])
+        num_blocks=len(self.DataList)
         #self.print()
         self.DataList.clear()
         self.DataList=[]
@@ -310,24 +313,38 @@ class SimulateData:
         self.category=category
         self.varname=varname
         self.description=description
-    def GenerateData(self, wait_time=1):
+    def GenerateArray(self, wait_time=1):
         #data=struct.pack('10d',0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0)
         #print("Adding data")
-        packer.AddData(self.category,self.varname,self.description,GetLVTimeNow(),array('d',[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]))
+        packer.AddData(self.category,self.varname,self.description,GetLVTimeNow(),array.array('d',[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]))
         time.sleep(wait_time)
-print("Current Run Number: "+str(packer.GetRunNumber()))
+    def GenerateNpArray(self, wait_time=1):
+        if HaveNumpy:
+            packer.AddData(self.category,self.varname,self.description,GetLVTimeNow(),np.array([0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0],dtype = 'float64'))
+        else:
+            print("Please install numpy")
+            exit(1)
+        time.sleep(wait_time)
+    def GenerateList(self,wait_time=1):
+        packer.AddData(self.category,self.varname,self.description,GetLVTimeNow(),[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0])
+        time.sleep(wait_time)
+
+#print("Current Run Number: "+str(packer.GetRunNumber()))
 #print("Current Run Status: "+str(packer.GetRunStatus()))
 
-ct_t=SimulateData(b"CatchingTrap",b"Temperature",b"PythonSimulation")
+ct_a=SimulateData(b"CatchingTrap",b"Array",b"PythonSimulation")
+ct_np=SimulateData(b"CatchingTrap",b"NpArray",b"PythonSimulation")
+ct_list=SimulateData(b"CatchingTrap",b"List",b"PythonSimulation")
 at_p=SimulateData(b"AtomTrap",b"Pressure",b"PythonSimulation")
 #time.sleep(1)
 while True:
    for i in range(10000):
-      #ct_t.GenerateData(0.0001)
-      ct_t.GenerateData(1)
-      #at_p.GenerateData(0.0001)
-   for i in range(10000):
-      at_p.GenerateData(1)
+      ct_a.GenerateArray(1./3.)
+      ct_np.GenerateNpArray(1./3.)
+      ct_list.GenerateList(1./3.)
+
+   #for i in range(10000):
+   #   at_p.GenerateArray(1)
    
 #ct_t.GenerateData(1)
 #ct_t.GenerateData(1)
