@@ -11,6 +11,14 @@ import datetime
 from array import array
 import json
 
+try:
+    import numpy as np
+    HaveNumpy=True
+    print("Numpy found... np arrays are supported")
+except:
+    HaveNumpy=False
+    print("Numpy not found... thats ok, but you can only use python arrays for data")
+
 
 
 def GetLVTimeNow():
@@ -67,6 +75,14 @@ class DataPacker:
     def AddData(self, catagory, varname, timestamp, data):
         #Matching bank not found in list... add this new bank to DataBanks list
         TYPE=b"NULL"
+        #Convert any lists to an array
+        if isinstance(data,list):
+            if type(data[0]) == 'float':
+                TYPE=b"DBL\0"
+                data=array('d',data)
+            else:
+                print("Unsupported list type... add some more!")
+                exit(1)
         #https://docs.python.org/3/library/array.html
         if isinstance(data,array):
             if data.typecode == 'd':
@@ -77,8 +93,23 @@ class DataPacker:
                 TYPE=b"I32\0"
             elif data.typecode == 'L':
                 TYPE=b"U32\0"
+            else:
+                print("Unsupported array type... consider using floats?")
+                exit(1)
             #Data need to be encoded as bytes... convert now
             data=data.tobytes()
+        elif HaveNumpy:
+            #https://docs.scipy.org/doc/numpy/reference/arrays.dtypes.html
+            if isinstance(data,np.ndarray):
+                if data.dtype == 'float64':
+                    TYPE=b"DBL\0"
+                elif data.dtype == 'float32':
+                    TYPE=b"FLT\0"
+                elif data.dtype == 'int32':
+                    TYPE=d"I32\0"
+                elif data.dtype == 'uint32':
+                    TYPE=b"U32\0"
+                data=data.tobytes()
         elif isinstance(data,str):
             data=bytearray(str(data), 'utf-8')
             TYPE=b"STR\0"
