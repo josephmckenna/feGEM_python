@@ -72,7 +72,7 @@ class DataPacker:
         t = threading.Thread(target=self.Run,args=(flush_time,))
         t.start()
         print("Polling thread launched")
-    def AddData(self, catagory, varname, timestamp, data):
+    def AddData(self, catagory, varname, description, timestamp, data):
         #Matching bank not found in list... add this new bank to DataBanks list
         TYPE=b"NULL"
         #Convert any lists to an array
@@ -81,24 +81,9 @@ class DataPacker:
                 TYPE=b"DBL\0"
                 data=array('d',data)
             else:
-                print("Unsupported list type... add some more!")
+                print("Unsupported list type ("+str(type(data[0]))+")... add some more!")
                 exit(1)
-        #https://docs.python.org/3/library/array.html
-        if isinstance(data,array):
-            if data.typecode == 'd':
-                TYPE=b"DBL\0"
-            if data.typecode == 'f':
-                TYPE=b"FLT\0"
-            elif data.typecode == 'l':
-                TYPE=b"I32\0"
-            elif data.typecode == 'L':
-                TYPE=b"U32\0"
-            else:
-                print("Unsupported array type... consider using floats?")
-                exit(1)
-            #Data need to be encoded as bytes... convert now
-            data=data.tobytes()
-        elif HaveNumpy:
+        if HaveNumpy:
             #https://docs.scipy.org/doc/numpy/reference/arrays.dtypes.html
             if isinstance(data,np.ndarray):
                 if data.dtype == 'float64':
@@ -106,10 +91,25 @@ class DataPacker:
                 elif data.dtype == 'float32':
                     TYPE=b"FLT\0"
                 elif data.dtype == 'int32':
-                    TYPE=d"I32\0"
+                    TYPE=b"I32\0"
                 elif data.dtype == 'uint32':
                     TYPE=b"U32\0"
                 data=data.tobytes()
+        #https://docs.python.org/3/library/array.html
+        if isinstance(data,array):
+            if data.typecode == 'd':
+                TYPE=b"DBL\0"
+            elif data.typecode == 'f':
+                TYPE=b"FLT\0"
+            elif data.typecode == 'l':
+                TYPE=b"I32\0"
+            elif data.typecode == 'L':
+                TYPE=b"U32\0"
+            else:
+                print("Unsupported array type ("+str(data.typecode)+")... consider using floats?")
+                exit(1)
+            #Data need to be encoded as bytes... convert now
+            data=data.tobytes()
         elif isinstance(data,str):
             data=bytearray(str(data), 'utf-8')
             TYPE=b"STR\0"
@@ -123,8 +123,8 @@ class DataPacker:
                 #bank.print()
                 bank.AddData(timestamp,data)
                 return
-        self.DataBanks.append(DataBank(TYPE,catagory,varname,b"EquipmentType"))
-        self.AddData(catagory, varname, timestamp, data)
+        self.DataBanks.append(DataBank(TYPE,catagory,varname,description))
+        self.AddData(catagory, varname, description, timestamp, data)
     def AddPeriodicTask(self,task):
         if task not in self.PeriodicTasks:
             self.PeriodicTasks.append(task)
@@ -204,7 +204,7 @@ class DataPacker:
         while True:
             #Execute periodic tasks (RunNumber tracking etc)
             for task in self.PeriodicTasks:
-                self.AddData(b"PERIODIC",bytes(task,'utf-8'),GetLVTimeNow(),str("\0"))
+                self.AddData(b"PERIODIC",bytes(task,'utf-8'),b"\0",GetLVTimeNow(),str("\0"))
             n=self.NumberToFlush()
             if n > 0:
                 Bundle=self.Flush()
@@ -306,19 +306,20 @@ packer=DataPacker("alphamidastest8")
 
 
 class SimulateData:
-    def __init__(self,category,varname):
+    def __init__(self,category,varname,description):
         self.category=category
         self.varname=varname
+        self.description=description
     def GenerateData(self, wait_time=1):
         #data=struct.pack('10d',0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0)
         #print("Adding data")
-        packer.AddData(self.category,self.varname,GetLVTimeNow(),array('d',[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]))
+        packer.AddData(self.category,self.varname,self.description,GetLVTimeNow(),array('d',[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]))
         time.sleep(wait_time)
 print("Current Run Number: "+str(packer.GetRunNumber()))
 #print("Current Run Status: "+str(packer.GetRunStatus()))
 
-ct_t=SimulateData(b"CatchingTrap",b"Temperature")
-at_p=SimulateData(b"AtomTrap",b"Pressure")
+ct_t=SimulateData(b"CatchingTrap",b"Temperature",b"PythonSimulation")
+at_p=SimulateData(b"AtomTrap",b"Pressure",b"PythonSimulation")
 #time.sleep(1)
 while True:
    for i in range(10000):
