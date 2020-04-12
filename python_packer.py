@@ -212,6 +212,9 @@ class DataPacker:
 
     #Main (forever) loop for flushing the queues... run as its own thread
     def Run(self,sleep_time=1):
+        connectMsg="New python connection from "+str(socket.gethostname())+ " PROGRAM:"+str(sys.argv[0])
+        print(connectMsg)
+        self.AddData(b"PYSYSMON",b"TALK",b"\0",GetLVTimeNow(),connectMsg)
         #  Do 10 requests, waiting each time for a response
         while True:
             #Execute periodic tasks (RunNumber tracking etc)
