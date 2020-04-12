@@ -39,6 +39,34 @@ def GetUnixTimeFromLVTime(timestamp):
     UnixTime-=2082844800
     return UnixTime
 
+def GetArrayType(arg):
+    switcher = {
+        'd' : b"DBL\0" ,
+        'f' : b"FLT\0" ,
+        'l' : b"I32\0" ,
+        'L' : b"U32\0" ,
+    }
+    return switcher.get(arg,"Unsupported array type ("+str(arg)+")... consider using floats?")
+
+def GetNpArrayType(arg):
+    switcher = {
+        np.dtype('float64') : b"DBL\0" ,
+        np.dtype('float32') : b"FLT\0" ,
+        np.dtype('int32') : b"I32\0" ,
+        np.dtype('uint32') : b"U32\0" ,
+    }
+    return switcher.get(arg,"Unsupported numpy array type ("+str(arg)+")... consider using floats?")
+
+
+#I only support list of doubles!
+def GetListType(arg):
+    switcher = {
+        type(float()) : b"DBL\0" ,
+        #b"I64\0": int,
+    }
+    return switcher.get(arg,"Unsupported list type ("+str(arg)+")... consider using floats?")
+           
+
 class DataPacker:
     """I have list of DataBanks"""
     RunNumber=-1
@@ -76,40 +104,19 @@ class DataPacker:
         TYPE=b"NULL"
         #Convert any lists to an array
         if isinstance(data,list):
-            if isinstance(data[0],float):
-                TYPE=b"DBL\0"
-                data=array.array('d',data)
-            else:
-                print("Unsupported list type ("+str(type(data[0]))+")... add some more!")
-                exit(1)
+            TYPE=GetListType(type(data[0]))
+            assert TYPE == b"DBL\0" , "list support is limited to doubles... please use arrays (or np arrays) for any other data type!"
+            data=array.array('d',data)
         if HaveNumpy:
             #https://docs.scipy.org/doc/numpy/reference/arrays.dtypes.html
             if isinstance(data,np.ndarray):
-                if data.dtype == 'float64':
-                    TYPE=b"DBL\0"
-                elif data.dtype == 'float32':
-                    TYPE=b"FLT\0"
-                elif data.dtype == 'int32':
-                    TYPE=b"I32\0"
-                elif data.dtype == 'uint32':
-                    TYPE=b"U32\0"
-                else:
-                    print("Unsupported numpy array type ("+data.dtype+")... add some more!")
-                    exit(1)
+                TYPE=GetNpArrayType(data.dtype)
+                assert len(TYPE)==4 , str(TYPE)
                 data=data.tobytes()
         #https://docs.python.org/3/library/array.html
         if isinstance(data,array.array):
-            if data.typecode == 'd':
-                TYPE=b"DBL\0"
-            elif data.typecode == 'f':
-                TYPE=b"FLT\0"
-            elif data.typecode == 'l':
-                TYPE=b"I32\0"
-            elif data.typecode == 'L':
-                TYPE=b"U32\0"
-            else:
-                print("Unsupported array type ("+str(data.typecode)+")... consider using floats?")
-                exit(1)
+            TYPE=GetArrayType(data.typecode)
+            assert len(TYPE)==4 , str(TYPE)
             #Data need to be encoded as bytes... convert now
             data=data.tobytes()
         elif isinstance(data,str):
