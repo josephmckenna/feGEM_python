@@ -68,6 +68,11 @@ def GetListType(arg):
     }
     return switcher.get(arg,"Unsupported list type ("+str(arg)+")... consider using floats?")
 
+def CleanInput(arg,length):
+    if isinstance(arg,str):
+        arg=bytes(arg[0:length],'utf8')
+    return arg
+
 """Main DataPacker Object... use it as a global object, its thread safe"""
 class DataPacker:
     """I have list of DataBanks"""
@@ -102,7 +107,11 @@ class DataPacker:
         t.start()
         print("Polling thread launched")
     def AddData(self, catagory, varname, description, timestamp, data):
-        #Matching bank not found in list... add this new bank to DataBanks list
+        #Clean up input strings... (convert str to bytes and trim length)
+        catagory=CleanInput(catagory,16)
+        varname=CleanInput(varname,16)
+        description=CleanInput(description,32)
+        #Default data type
         TYPE=b"NULL"
         #Convert any lists to an array
         if isinstance(data,list):
@@ -132,9 +141,10 @@ class DataPacker:
             exit(1)
         for bank in self.DataBanks:
             if bank.VARCATAGORY==catagory and bank.VARNAME==varname:
-                #bank.print()
+                #Bank already in memory! Add data to it!
                 bank.AddData(timestamp,data)
                 return
+        #Matching bank not found in list... add this new bank to DataBanks list
         self.DataBanks.append(DataBank(TYPE,catagory,varname,description))
         self.AddData(catagory, varname, description, timestamp, data)
     def AddPeriodicTask(self,task):
