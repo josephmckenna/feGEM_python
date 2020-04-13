@@ -29,10 +29,10 @@ class SimulateData:
 print("Current Run Number: "+str(packer.GetRunNumber()))
 print("Current Run Status: "+str(packer.GetRunStatus()))
 
-ct_a=SimulateData(b"CatchingTrap",b"Array",b"PythonSimulation")
-ct_np=SimulateData(b"CatchingTrap",b"NpArray",b"PythonSimulation")
-ct_list=SimulateData(b"CatchingTrap",b"List",b"PythonSimulation")
-at_p=SimulateData(b"AtomTrap",b"Pressure",b"PythonSimulation")
+ct_a=SimulateData("CatchingTrap","Array","PythonSimulation")
+ct_np=SimulateData("CatchingTrap","NpArray","PythonSimulation")
+ct_list=SimulateData("CatchingTrap","List","PythonSimulation")
+at_p=SimulateData("AtomTrap","Pressure","PythonSimulation")
 #time.sleep(1)
 while True:
    for i in range(10000):
