@@ -91,7 +91,7 @@ class DataPacker:
         start_string=b"START_FRONTEND "+bytes(socket.gethostname(),'utf8')
         self.socket.send(start_string)
         response=self.socket.recv()
-        get_addr=b"GIVE_ME_ADDRESS  "+bytes(socket.gethostname(),'utf8')
+        get_addr=b"GIVE_ME_ADDRESS "+bytes(socket.gethostname(),'utf8')
         self.socket.send(get_addr)
         address=self.socket.recv()
         print("Logging to address:"+address.decode("utf-8") )
