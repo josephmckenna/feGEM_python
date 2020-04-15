@@ -227,15 +227,11 @@ class DataPacker:
         return super_bank
 
     #Check for the string 'item' in json_list, update target if found
-    def __ParseReplyItem(self,json_list,item,target):
+    def __ParseReplyItem(self,json_list,item):
         ItemList=[i for i, s in enumerate(json_list) if item in str(s)]
-        print(json_list)
-        target_type=type(target)
-        print(item)
         for i in ItemList:
-            target=target_type(str(json_list[i]).split(':')[1].replace('\'',''))
-            print("TARGET:")
-            print(target)
+            return str(json_list[i]).split(':')[1].replace('\'','')
+        return None
 
     #Print all 'item' in json_list
     def __PrintReplyItems(self,json_list,item):
@@ -247,9 +243,15 @@ class DataPacker:
     def __HandleReply(self, reply):
         #Unfold the json string into a list
         ReplyList=json.loads(reply)
-        self.__ParseReplyItem(ReplyList,'RunNumber:',self.RunNumber)
-        self.__ParseReplyItem(ReplyList,'EventSize:',self.MaxEventSize)
-        self.__ParseReplyItem(ReplyList,'STATUS:',self.RunStatus)
+        tmp=self.__ParseReplyItem(ReplyList,'RunNumber:')
+        if tmp:
+            self.RunNumber=int(tmp)
+        tmp=self.__ParseReplyItem(ReplyList,'EventSize:')
+        if tmp:
+            self.MaxEventSize=int(tmp)
+        tmp=self.__ParseReplyItem(ReplyList,'STATUS:')
+        if tmp:
+            self.RunStatus=tmp
         self.__PrintReplyItems(ReplyList,'Msg:')
         self.__PrintReplyItems(ReplyList,'Err:')
 
