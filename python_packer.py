@@ -1,16 +1,17 @@
 #Python 3 tool to log data to MIDAS (feLabVIEW)
+
+#Standard libraries:
 import sys
 import threading
-import zmq
 import time
 import socket
 import struct
 import datetime
-
 import json
+import array #Default behaviour is to use array as data type for logging...
 
-#Default behaviour is to use array as data type for logging...
-import array
+#External libraries:
+import zmq
 #Numpy is also supported
 try:
     import numpy as np
@@ -68,7 +69,7 @@ def GetListType(arg):
     }
     return switcher.get(arg,"Unsupported list type ("+str(arg)+")... consider using floats?")
 
-def CleanInput(arg,length):
+def CleanString(arg,length):
     if isinstance(arg,str):
         arg=bytes(arg[0:length],'utf8')
     return arg
@@ -82,12 +83,12 @@ class DataPacker:
     def __init__(self, experiment, flush_time=1):
         self.DataBanks=[]
         self.context = zmq.Context()
-        #  Socket to talk to server
+
+        #  Connect to LabVIEW frontend 'supervisor'
         print("Connecting to MIDAS server...")
         self.socket = self.context.socket(zmq.REQ)
         self.socket.connect("tcp://"+experiment+":5555")
-        print("Connection made...")
-        print("Requesting to start logging")
+        print("Connection made... Requesting to start logging")
         start_string=b"START_FRONTEND "+bytes(socket.gethostname(),'utf8')
         self.socket.send(start_string)
         response=self.socket.recv()
@@ -96,23 +97,31 @@ class DataPacker:
         address=self.socket.recv()
         print("Logging to address:"+address.decode("utf-8") )
         self.socket.disconnect("tcp://"+experiment+":5555")
+
+        # Connect to LabVIEW frontend 'worker' (where we send data)
         self.socket.connect(address)
+        # Request the max data pack size
         get_event_size=b"GIVE_ME_EVENT_SIZE"
         self.socket.send(get_event_size)
-        EventSize=self.socket.recv()
-        #Trim text before :, and remove all ' marks... ie get the integer out of the string
-        self.MaxEventSize=int((str(EventSize).split(':')[1].replace('\'','')))
+        self.HandleReply(self.socket.recv())
         print("MaxEventSize:"+str(self.MaxEventSize))
-        t = threading.Thread(target=self.Run,args=(flush_time,))
+
+        # Stack background thread to flush data
+        t = threading.Thread(target=self.__Run,args=(flush_time,))
         t.start()
         print("Polling thread launched")
+
+    def AnnounceOnSpeaker(self,message)
+        self.AddData(b"PYSYSMON",b"TALK",b"\0",GetLVTimeNow(),message)
+
     def AddData(self, catagory, varname, description, timestamp, data):
         #Clean up input strings... (convert str to bytes and trim length)
-        catagory=CleanInput(catagory,16)
-        varname=CleanInput(varname,16)
-        description=CleanInput(description,32)
+        catagory=CleanString(catagory,16)
+        varname=CleanString(varname,16)
+        description=CleanString(description,32)
         #Default data type
         TYPE=b"NULL"
+
         #Convert any lists to an array
         if isinstance(data,list):
             TYPE=GetListType(type(data[0]))
@@ -120,25 +129,28 @@ class DataPacker:
             data=array.array('d',data)
         if HaveNumpy:
             #https://docs.scipy.org/doc/numpy/reference/arrays.dtypes.html
-            if isinstance(data,np.ndarray):
+            if isinstance(data,np.ndarray): #Convert numpy array to byte array
                 TYPE=GetNpArrayType(data.dtype)
                 assert len(TYPE)==4 , str(TYPE)
                 data=data.tobytes()
         #https://docs.python.org/3/library/array.html
-        if isinstance(data,array.array):
+        if isinstance(data,array.array): #Convert python array to byte array
             TYPE=GetArrayType(data.typecode)
             assert len(TYPE)==4 , str(TYPE)
             #Data need to be encoded as bytes... convert now
             data=data.tobytes()
-        elif isinstance(data,str):
+        elif isinstance(data,str): #Convert string data to byte array
             data=bytearray(str(data), 'utf-8')
             TYPE=b"STR\0"
-        elif isinstance(data,bytearray) or isinstance(data,bytes):
+        #Unknown data type... maybe the user is logging a 'blob' of data
+        elif isinstance(data,bytearray) or isinstance(data,bytes): 
             if TYPE == b"NULL":
                TYPE=b"U8\0\0"
         else:
             print("Unsupported data format ("+str(type(data))+")... upgrade DataPacker!")
             exit(1)
+
+        #Find existing bank to add data to
         for bank in self.DataBanks:
             if bank.VARCATAGORY==catagory and bank.VARNAME==varname:
                 #Bank already in memory! Add data to it!
@@ -147,34 +159,37 @@ class DataPacker:
         #Matching bank not found in list... add this new bank to DataBanks list
         self.DataBanks.append(DataBank(TYPE,catagory,varname,description))
         self.AddData(catagory, varname, description, timestamp, data)
-    def AddPeriodicTask(self,task):
+
+    #Add a task that is called once per second (eg track RunNumber).(Is private function)
+    def __AddPeriodicRequestTask(self,task):
         if task not in self.PeriodicTasks:
             self.PeriodicTasks.append(task)
+
     def GetRunNumber(self):
         #Launch the periodic task to track the RunNumber
-        self.AddPeriodicTask("GET_RUNNO")
+        self.__AddPeriodicRequestTask("GET_RUNNO")
         #Wait until we have a valid RunNumber (happens on first call only)
         while self.RunNumber < 0:
            time.sleep(0.1)
         return self.RunNumber
+
     def GetRunStatus(self):
         #Launch the peridoc task to track Run Status
-        self.AddPeriodicTask("GET_STATUS")
+        self.__AddPeriodicRequestTask("GET_STATUS")
         while len(self.RunStatus) == 0:
             time.sleep(0.1)
         return self.RunStatus
-    def UniqueToFlush(self):
+
+    #Check all banks for data that needs flushing
+    def __BanksToFlush(self):
         n=0
         for bank in self.DataBanks:
             if bank.NumberToFlush()>0:
                 n+=1
         return n
-    def NumberToFlush(self):
-        n=0
-        for bank in self.DataBanks:
-            n+=bank.NumberToFlush()
-        return n
-    def Flush(self):
+
+    #Flatten all data in memory (to send to MIDAS)
+    def __Flush(self):
         #If data packer has no banks... do nothing
         if len(self.DataBanks)==0:
             return
@@ -182,10 +197,11 @@ class DataPacker:
         if len(self.DataBanks)==1:
             return self.DataBanks[0].Flush()
         #If data packer only has one bank type to flush... flush it
-        if self.UniqueToFlush()==1:
+        if self.__BanksToFlush()==1:
             for bank in self.DataBanks:
                 if bank.NumberToFlush() > 0:
-                   return bank.Flush()
+                    assert(bank.DataLengthOfAllBank+88<self.MaxEventSize)
+                    return bank.Flush()
         #If data packer has many banks to flush, put them in a superbank
         print("Building super bank")
         lump=b''
@@ -207,55 +223,60 @@ class DataPacker:
         #You are about to send more data the MIDAS is ready to handle... throw an error! Increase the event_size in the ODB!
         assert(len(lump)<self.MaxEventSize)
         return super_bank
-    def HandleReply(self, reply):
-        ReplyList=json.loads(reply)
-        RunnoList=[i for i, s in enumerate(ReplyList) if 'RunNumber:' in str(s)]
-        for pos in RunnoList:
-            self.RunNumber=int(str(ReplyList[pos]).split(':')[1].replace('\'',''))
-        StatusList=[i for i, s in enumerate(ReplyList) if 'STATUS:' in str(s)]
-        for pos in StatusList:
-            self.RunStatus=str(ReplyList[pos]).split(':')[1].replace('\'','')
-        HaveMsg=[i for i, s in enumerate(ReplyList) if 'Msg:' in str(s)]
+
+    #Check for the string 'item' in json_list, update target if found
+    def __ParseReplyItem(self,json_list,item,target)
+        ItemList=[i for i, s in enumerate(json_list) if item in str(s)]
+        target_type=type(target)
+        for i in ItemList:
+            target=target_type(str(json_list[i]).split(':')[1].replace('\'',''))
+
+    #Print all 'item' in json_list
+    def __PrintReplyItems(self,json_list,item)
+        HaveMsg=[i for i, s in enumerate(json_list) if item in str(s)]
         for msg in HaveMsg:
             print(ReplyList[msg])
-        
+
+    #Parse the json string MIDAS sends as a reply to data
+    def __HandleReply(self, reply):
+        #Unfold the json string into a list
+        ReplyList=json.loads(reply)
+        self.__ParseReplyItem(ReplyList,'RunNumber:',self.RunNumber)
+        self.__ParseReplyItem(ReplyList,'MaxEventSize:',self.MaxEventSize)
+        self.__ParseReplyItem(ReplyList,'STATUS:',self.RunStatus)
+        self.__PrintReplyItems(ReplyList,'Msg:')
+        self.__PrintReplyItems(ReplyList,'Err:')
 
     #Main (forever) loop for flushing the queues... run as its own thread
-    def Run(self,sleep_time=1):
-        connectMsg="New python connection from "+str(socket.gethostname())+ " PROGRAM:"+str(sys.argv)
+    def __Run(self,sleep_time=1):
+        #Announce I am connection on MIDAS speaker
+        connectMsg="New python connection from "+str(socket.gethostname()) +
+                   " PROGRAM:"+str(sys.argv)
         print(connectMsg)
-        self.AddData(b"PYSYSMON",b"TALK",b"\0",GetLVTimeNow(),connectMsg)
-        #  Do 10 requests, waiting each time for a response
+        self.AnnounceOnSpeaker(connectMsg)
+        
+        # Run forever!
         while True:
-            #Execute periodic tasks (RunNumber tracking etc)
+            # Execute periodic tasks (RunNumber tracking etc)
             for task in self.PeriodicTasks:
                 self.AddData(b"PERIODIC",bytes(task,'utf-8'),b"\0",GetLVTimeNow(),str("\0"))
-            n=self.NumberToFlush()
+            # Flatten data in memory and send to MIDAS (if there is any data)
+            n=self.__BanksToFlush()
             if n > 0:
-                Bundle=self.Flush()
-                print("Sending " +str(n) +" data bundles ("+str(len(Bundle)) +" bytes)...")
+                Bundle=self.__Flush()
+                print("Sending " +str(n) +" banks of data ("+str(len(Bundle)) +" bytes)...")
                 self.socket.send(Bundle)
                 print("Sent...")
                 #  Get the reply.
                 message = self.socket.recv()
                 print("Received reply [ %s ]" % message)
-                self.HandleReply(message)
+                self.__HandleReply(message)
                 if message[0:5]==b"ERROR":
                     print("ERROR reported from MIDAS! FATAL!")
                     exit(1)
             else:
                 print("Nothing to flush")
             time.sleep(sleep_time)
-    
-    #Early prototype for passing messages to MIDAS... 
-    def AddMessage(self, message):
-        if len(message)<30:
-            #Short messages can use the 32 characters inside the header
-            "MSGS" #message short
-            #Messages more than 32 characters will have a character array
-            "MSGL" #message long
-
-
 
 class DataBank:
     LVBANK='4s4s16s16s32siiii{}s'
