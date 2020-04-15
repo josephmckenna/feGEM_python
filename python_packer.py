@@ -80,6 +80,7 @@ class DataPacker:
     RunNumber=-1
     RunStatus=str()
     PeriodicTasks=list()
+    
     def __init__(self, experiment, flush_time=1):
         self.DataBanks=[]
         self.context = zmq.Context()
@@ -103,7 +104,8 @@ class DataPacker:
         # Request the max data pack size
         get_event_size=b"GIVE_ME_EVENT_SIZE"
         self.socket.send(get_event_size)
-        self.HandleReply(self.socket.recv())
+        self.MaxEventSize=-1
+        self.__HandleReply(self.socket.recv())
         print("MaxEventSize:"+str(self.MaxEventSize))
 
         # Stack background thread to flush data
@@ -111,7 +113,7 @@ class DataPacker:
         t.start()
         print("Polling thread launched")
 
-    def AnnounceOnSpeaker(self,message)
+    def AnnounceOnSpeaker(self,message):
         self.AddData(b"PYSYSMON",b"TALK",b"\0",GetLVTimeNow(),message)
 
     def AddData(self, catagory, varname, description, timestamp, data):
@@ -200,7 +202,7 @@ class DataPacker:
         if self.__BanksToFlush()==1:
             for bank in self.DataBanks:
                 if bank.NumberToFlush() > 0:
-                    assert(bank.DataLengthOfAllBank+88<self.MaxEventSize)
+                    assert(bank.DataLengthOfAllBank()+88<self.MaxEventSize)
                     return bank.Flush()
         #If data packer has many banks to flush, put them in a superbank
         print("Building super bank")
@@ -225,14 +227,18 @@ class DataPacker:
         return super_bank
 
     #Check for the string 'item' in json_list, update target if found
-    def __ParseReplyItem(self,json_list,item,target)
+    def __ParseReplyItem(self,json_list,item,target):
         ItemList=[i for i, s in enumerate(json_list) if item in str(s)]
+        print(json_list)
         target_type=type(target)
+        print(item)
         for i in ItemList:
             target=target_type(str(json_list[i]).split(':')[1].replace('\'',''))
+            print("TARGET:")
+            print(target)
 
     #Print all 'item' in json_list
-    def __PrintReplyItems(self,json_list,item)
+    def __PrintReplyItems(self,json_list,item):
         HaveMsg=[i for i, s in enumerate(json_list) if item in str(s)]
         for msg in HaveMsg:
             print(ReplyList[msg])
@@ -242,7 +248,7 @@ class DataPacker:
         #Unfold the json string into a list
         ReplyList=json.loads(reply)
         self.__ParseReplyItem(ReplyList,'RunNumber:',self.RunNumber)
-        self.__ParseReplyItem(ReplyList,'MaxEventSize:',self.MaxEventSize)
+        self.__ParseReplyItem(ReplyList,'EventSize:',self.MaxEventSize)
         self.__ParseReplyItem(ReplyList,'STATUS:',self.RunStatus)
         self.__PrintReplyItems(ReplyList,'Msg:')
         self.__PrintReplyItems(ReplyList,'Err:')
@@ -250,8 +256,7 @@ class DataPacker:
     #Main (forever) loop for flushing the queues... run as its own thread
     def __Run(self,sleep_time=1):
         #Announce I am connection on MIDAS speaker
-        connectMsg="New python connection from "+str(socket.gethostname()) +
-                   " PROGRAM:"+str(sys.argv)
+        connectMsg="New python connection from "+str(socket.gethostname()) + " PROGRAM:"+str(sys.argv)
         print(connectMsg)
         self.AnnounceOnSpeaker(connectMsg)
         
