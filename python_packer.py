@@ -12,7 +12,7 @@ import json
 import array #Default behaviour is to use array as data type for logging...
 import os
 #External libraries:
-#import psutil
+
 import zmq
 #Numpy is also supported
 try:
@@ -22,7 +22,14 @@ try:
 except:
     HaveNumpy=False
     print("Numpy not found... thats ok, but you can only use python arrays for data")
-
+#
+try:
+    import psutil
+    HavePsutil=True
+    print("psutil found... I will log CPU and MEM load")
+except:
+    HavePsutil=False
+    print("psutil not found... please install it to log the CPU load on this machine (requires python3-devel)")
 
 """Timestamp functions"""
 def GetLVTimeNow():
@@ -181,10 +188,22 @@ class DataPacker:
         self.MaxEventSize=-1
         self.__HandleReply(self.socket.recv())
         print("MaxEventSize:"+str(self.MaxEventSize))
-        # Stack background thread to flush data
-        t = threading.Thread(target=self.__Run,args=(flush_time,))
-        t.start()
+        # Start background thread to flush data
+        t1 = threading.Thread(target=self.__Run,args=(flush_time,))
+        t1.start()
+        # Start lightweight background thread to log CPU load
+        if HavePsutil:
+            t2 = threading.Thread(target=self.__LogLoad)
+            t2.start()
         print("Polling thread launched")
+
+    #Log CPU load and memory usage once per minute
+    def __LogLoad(self):
+        while True:
+            CPU=psutil.cpu_percent(60)
+            MEM=psutil.virtual_memory().percent
+            #print("Logging CPUMEM"+str(CPU)+"  "+str(MEM))
+            self.AddData("PYSYSMON","CPUMEM","",GetLVTimeNow(),[CPU,MEM])
 
     #Add a task that is called once per second (eg track RunNumber).(Is private function)
     def __AddPeriodicRequestTask(self,task):
