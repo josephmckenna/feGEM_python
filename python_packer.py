@@ -10,7 +10,7 @@ import struct
 import datetime
 import json
 import array #Default behaviour is to use array as data type for logging...
-
+import os
 #External libraries:
 #import psutil
 import zmq
@@ -211,7 +211,6 @@ class DataPacker:
         if self.__BanksToFlush()==1:
             for bank in self.DataBanks:
                 if bank.NumberToFlush() > 0:
-                    assert(bank.DataLengthOfBank()<self.MaxEventSize)
                     return bank.Flush()
         #If data packer has many banks to flush, put them in a superbank
         print("Building super bank")
@@ -231,9 +230,8 @@ class DataPacker:
                                         number_of_banks,
                                         lump)
         print("Size of lump in super bank:"+str(len(lump))+"("+str(number_of_banks)+" banks)")
-        #You are about to send more data the MIDAS is ready to handle... throw an error! Increase the event_size in the ODB!
-        assert(len(lump)<self.MaxEventSize)
         return super_bank
+
 
     #Check for the string 'item' in json_list, update target if found
     def __ParseReplyItem(self,json_list,item):
@@ -303,6 +301,12 @@ class DataPacker:
         print(message)
         return message
 
+    def CheckDataLength(self,length):
+        if (length>self.MaxEventSize):
+            print("Safety limit! You are logging too much data too fast ("
+            +str(length/1000)+"kbps>"+str(self.MaxEventSize/1000)+"kbps)... increase this threshold in the odb")
+            os._exit(1)
+
     #Main (forever) loop for flushing the queues... run as its own thread
     def __Run(self,sleep_time=1):
         #Announce I am connection on MIDAS speaker
@@ -319,6 +323,7 @@ class DataPacker:
             n=self.__BanksToFlush()
             if n > 0:
                 Bundle=self.__Flush()
+                self.CheckDataLength(len(Bundle))
                 print("Sending " +str(n) +" banks of data ("+str(len(Bundle)) +" bytes)...")
                 #self.socket.send(Bundle)
                 #print("Sent...")
@@ -330,7 +335,7 @@ class DataPacker:
                 self.__HandleReply(message)
                 if message[0:5]==b"ERROR":
                     print("ERROR reported from MIDAS! FATAL!")
-                    exit(1)
+                    os._exit(1)
             else:
                 print("Nothing to flush")
             time.sleep(sleep_time)
