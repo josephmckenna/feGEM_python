@@ -4,6 +4,7 @@
 import sys
 import threading
 import time
+#Get Hostname of machine using python
 import socket
 import struct
 import datetime
@@ -11,6 +12,7 @@ import json
 import array #Default behaviour is to use array as data type for logging...
 
 #External libraries:
+#import psutil
 import zmq
 #Numpy is also supported
 try:
@@ -80,11 +82,83 @@ class DataPacker:
     RunNumber=-1
     RunStatus=str()
     PeriodicTasks=list()
+
+    """Public member functions:"""
+
+    def AnnounceOnSpeaker(self,message):
+        self.AddData(b"PYSYSMON",b"TALK",b"\0",GetLVTimeNow(),message)
+
+    def GetRunNumber(self):
+        #Launch the periodic task to track the RunNumber
+        self.__AddPeriodicRequestTask("GET_RUNNO")
+        #Wait until we have a valid RunNumber (happens on first call only)
+        while self.RunNumber < 0:
+           time.sleep(0.1)
+        return self.RunNumber
+
+    def GetRunStatus(self):
+        #Launch the peridoc task to track Run Status
+        self.__AddPeriodicRequestTask("GET_STATUS")
+        while len(self.RunStatus) == 0:
+            time.sleep(0.1)
+        return self.RunStatus
+
+    def AddData(self, category, varname, description, timestamp, data):
+        #Clean up input strings... (convert str to bytes and trim length)
+        category=CleanString(category,16)
+        varname=CleanString(varname,16)
+        description=CleanString(description,32)
+        #Default data type
+        TYPE=b"NULL"
+
+        #Convert any lists to an array
+        if isinstance(data,list):
+            TYPE=GetListType(type(data[0]))
+            assert TYPE == b"DBL\0" , "list support is limited to doubles... please use arrays (or np arrays) for any other data type!"
+            data=array.array('d',data)
+        #If we have Numpy, convert array to byte array
+        if HaveNumpy:
+            #https://docs.scipy.org/doc/numpy/reference/arrays.dtypes.html
+            if isinstance(data,np.ndarray): #Convert numpy array to byte array
+                TYPE=GetNpArrayType(data.dtype)
+                assert len(TYPE)==4 , str(TYPE)
+                data=data.tobytes()
+        #Convert python array to byte array
+        #https://docs.python.org/3/library/array.html
+        if isinstance(data,array.array):
+            TYPE=GetArrayType(data.typecode)
+            assert len(TYPE)==4 , str(TYPE)
+            #Data need to be encoded as bytes... convert now
+            data=data.tobytes()
+        #Convert string data to byte array
+        elif isinstance(data,str):
+            data=bytearray(str(data), 'utf-8')
+            TYPE=b"STR\0"
+        #Unknown data type... maybe the user is logging a 'blob' of data
+        elif isinstance(data,bytearray) or isinstance(data,bytes): 
+            if TYPE == b"NULL":
+               TYPE=b"U8\0\0"
+        else:
+            print("Unsupported data format ("+str(type(data))+")... upgrade DataPacker!")
+            exit(1)
+
+        #Find existing bank to add data to
+        for bank in self.DataBanks:
+            if bank.IsBankMatch(category,varname):
+                #Bank already in memory! Add data to it!
+                bank.AddData(timestamp,data)
+                return
+        #Matching bank not found in list... add this new bank to DataBanks list
+        self.DataBanks.append(DataBank(TYPE,category,varname,description))
+        self.AddData(category, varname, description, timestamp, data)
+
+
+    """Private member functions"""
     
     def __init__(self, experiment, flush_time=1):
+        self.experiment=experiment
         self.DataBanks=[]
         self.context = zmq.Context()
-
         #  Connect to LabVIEW frontend 'supervisor'
         print("Connecting to MIDAS server...")
         self.socket = self.context.socket(zmq.REQ)
@@ -107,80 +181,15 @@ class DataPacker:
         self.MaxEventSize=-1
         self.__HandleReply(self.socket.recv())
         print("MaxEventSize:"+str(self.MaxEventSize))
-
         # Stack background thread to flush data
         t = threading.Thread(target=self.__Run,args=(flush_time,))
         t.start()
         print("Polling thread launched")
 
-    def AnnounceOnSpeaker(self,message):
-        self.AddData(b"PYSYSMON",b"TALK",b"\0",GetLVTimeNow(),message)
-
-    def AddData(self, catagory, varname, description, timestamp, data):
-        #Clean up input strings... (convert str to bytes and trim length)
-        catagory=CleanString(catagory,16)
-        varname=CleanString(varname,16)
-        description=CleanString(description,32)
-        #Default data type
-        TYPE=b"NULL"
-
-        #Convert any lists to an array
-        if isinstance(data,list):
-            TYPE=GetListType(type(data[0]))
-            assert TYPE == b"DBL\0" , "list support is limited to doubles... please use arrays (or np arrays) for any other data type!"
-            data=array.array('d',data)
-        if HaveNumpy:
-            #https://docs.scipy.org/doc/numpy/reference/arrays.dtypes.html
-            if isinstance(data,np.ndarray): #Convert numpy array to byte array
-                TYPE=GetNpArrayType(data.dtype)
-                assert len(TYPE)==4 , str(TYPE)
-                data=data.tobytes()
-        #https://docs.python.org/3/library/array.html
-        if isinstance(data,array.array): #Convert python array to byte array
-            TYPE=GetArrayType(data.typecode)
-            assert len(TYPE)==4 , str(TYPE)
-            #Data need to be encoded as bytes... convert now
-            data=data.tobytes()
-        elif isinstance(data,str): #Convert string data to byte array
-            data=bytearray(str(data), 'utf-8')
-            TYPE=b"STR\0"
-        #Unknown data type... maybe the user is logging a 'blob' of data
-        elif isinstance(data,bytearray) or isinstance(data,bytes): 
-            if TYPE == b"NULL":
-               TYPE=b"U8\0\0"
-        else:
-            print("Unsupported data format ("+str(type(data))+")... upgrade DataPacker!")
-            exit(1)
-
-        #Find existing bank to add data to
-        for bank in self.DataBanks:
-            if bank.VARCATAGORY==catagory and bank.VARNAME==varname:
-                #Bank already in memory! Add data to it!
-                bank.AddData(timestamp,data)
-                return
-        #Matching bank not found in list... add this new bank to DataBanks list
-        self.DataBanks.append(DataBank(TYPE,catagory,varname,description))
-        self.AddData(catagory, varname, description, timestamp, data)
-
     #Add a task that is called once per second (eg track RunNumber).(Is private function)
     def __AddPeriodicRequestTask(self,task):
         if task not in self.PeriodicTasks:
             self.PeriodicTasks.append(task)
-
-    def GetRunNumber(self):
-        #Launch the periodic task to track the RunNumber
-        self.__AddPeriodicRequestTask("GET_RUNNO")
-        #Wait until we have a valid RunNumber (happens on first call only)
-        while self.RunNumber < 0:
-           time.sleep(0.1)
-        return self.RunNumber
-
-    def GetRunStatus(self):
-        #Launch the peridoc task to track Run Status
-        self.__AddPeriodicRequestTask("GET_STATUS")
-        while len(self.RunStatus) == 0:
-            time.sleep(0.1)
-        return self.RunStatus
 
     #Check all banks for data that needs flushing
     def __BanksToFlush(self):
@@ -202,7 +211,7 @@ class DataPacker:
         if self.__BanksToFlush()==1:
             for bank in self.DataBanks:
                 if bank.NumberToFlush() > 0:
-                    assert(bank.DataLengthOfAllBank()+88<self.MaxEventSize)
+                    assert(bank.DataLengthOfBank()<self.MaxEventSize)
                     return bank.Flush()
         #If data packer has many banks to flush, put them in a superbank
         print("Building super bank")
@@ -237,7 +246,7 @@ class DataPacker:
     def __PrintReplyItems(self,json_list,item):
         HaveMsg=[i for i, s in enumerate(json_list) if item in str(s)]
         for msg in HaveMsg:
-            print(ReplyList[msg])
+            print(json_list[msg])
 
     #Parse the json string MIDAS sends as a reply to data
     def __HandleReply(self, reply):
@@ -252,8 +261,47 @@ class DataPacker:
         tmp=self.__ParseReplyItem(ReplyList,'STATUS:')
         if tmp:
             self.RunStatus=tmp
-        self.__PrintReplyItems(ReplyList,'Msg:')
-        self.__PrintReplyItems(ReplyList,'Err:')
+        self.__PrintReplyItems(ReplyList,'msg:')
+        self.__PrintReplyItems(ReplyList,'err:')
+
+    #Send formatted data to MIDAS
+    def __SendWithTimeout(self,data,try_limit):
+        send_attempt=0
+        while send_attempt<try_limit:
+            try:
+                self.socket.send(data, zmq.NOBLOCK)
+                break
+            except zmq.error.Again:
+                #print("Retrying"+srt(send_attempt))
+                send_attempt+=1
+                time.sleep(0.01)
+            except Exception:
+                print("New unknown exception!!!")
+                exit(1)
+        if send_attempt>=try_limit:
+            self.__init__(self.experiment)
+        print("Sent on attempt"+str(send_attempt))
+
+    #Recieve data from MIDAS. Always returns a string
+    def __RecieveWithTimeout(self,try_limit):
+        receive_attempt=0
+        message=str()
+        while receive_attempt<try_limit:
+            try:
+                message = self.socket.recv(zmq.NOBLOCK)
+                break
+            except zmq.error.Again:
+                receive_attempt+=1
+                time.sleep(0.01)
+            except Exception:
+                print("New unknown exception!!!")
+                exit(1)
+        if receive_attempt>=try_limit:
+            self.__init__(self.experiment)
+            message="Timeout after "+str(receive_attempt) + " tries"
+        print("Received reply on attempt "+str(receive_attempt))
+        print(message)
+        return message
 
     #Main (forever) loop for flushing the queues... run as its own thread
     def __Run(self,sleep_time=1):
@@ -272,11 +320,13 @@ class DataPacker:
             if n > 0:
                 Bundle=self.__Flush()
                 print("Sending " +str(n) +" banks of data ("+str(len(Bundle)) +" bytes)...")
-                self.socket.send(Bundle)
-                print("Sent...")
+                #self.socket.send(Bundle)
+                #print("Sent...")
+                self.__SendWithTimeout(Bundle,100)
                 #  Get the reply.
-                message = self.socket.recv()
-                print("Received reply [ %s ]" % message)
+                #message = self.socket.recv()
+                #print("Received reply [ %s ]" % message)
+                message = self.__RecieveWithTimeout(100)
                 self.__HandleReply(message)
                 if message[0:5]==b"ERROR":
                     print("ERROR reported from MIDAS! FATAL!")
@@ -286,51 +336,74 @@ class DataPacker:
             time.sleep(sleep_time)
 
 class DataBank:
+    #LVBANK and LVDATA description: https://alphacpc05.cern.ch/elog/ALPHA/25025
+    LVBANKHEADERSIZE=88
+    #LVBANK Header format
     LVBANK='4s4s16s16s32siiii{}s'
+    #LVDATA Header format
     LVDATA='16s{}s'
     r = threading.RLock()
-    def __init__(self, datatype, catagory, varname,eqtype):
+
+    #Arguments must be bytes... assert statements enforce this
+    def __init__(self, datatype, category, varname,eqtype):
         self.BANK=b"PYB1"
         assert(isinstance(datatype,bytes))
         self.DATATYPE=datatype
-        assert(isinstance(catagory,bytes))
-        self.VARCATAGORY=catagory
+        assert(isinstance(category,bytes))
+        self.VARCATEGORY=category
         assert(isinstance(varname,bytes))
         self.VARNAME=varname
         assert(isinstance(eqtype,bytes))
         self.EQTYPE=eqtype
         self.DataList=[]
+
+    def IsBankMatch(self,category,varname):
+        if (self.VARCATEGORY==category) and (self.VARNAME==varname):
+            return True
+        else:
+            return False
+
     def print(self):
         print("BANK:"+str(self.BANK))
         print("TYPE:"+str(self.DATATYPE))
-        print("CATEGORY:"+str(self.VARCATAGORY))
+        print("CATEGORY:"+str(self.VARCATEGORY))
         print("VARNAME:"+str(self.VARNAME))
         print("EQTYPE:"+str(self.EQTYPE))
         print("Datalist size:"+str(len(self.DataList)))
         if (len(self.DataList)):
            print("LVDATA size:"+str(len(self.DataList[0])))
+
+    #Add a single array (LVDATA) of data to the bank (LVBANK)
     def AddData(self,timestamp,data):
-        #print("Adding data to bank")
+        #Pack timestamp and data array into LVDATA format
         lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,data)
+        #Check the length of the last array matches the first
         if len(self.DataList) > 0:
             assert len(self.DataList[0]) == len(lvdata)
+        #Add this LVDATA to a list for later flattening (thread safe)
         self.r.acquire()
         self.DataList.append(lvdata)
         self.r.release()
+
+    #Number of items in DataList (Count of arrays logged to bank)
     def NumberToFlush(self):
         return len(self.DataList)
-    def DataLengthOfAllBank(self):
-        n=0
+
+    #Total size of all data waiting to be flattened
+    def DataLengthOfBank(self):
+        n=self.LVBANKHEADERSIZE
         for bank in self.DataList:
             n+=len(bank)
         return n
+
+    #Flatten all data in DataList
     def Flush(self):
         self.r.acquire()
+        #Check if there is anything to do
         if len(self.DataList) == 0:
             print("Nothing in DataList to flush")
             self.r.release()
             return
-        #print("Flushing")
         #print("Banks to flush:" + str(self.NumberToFlush() ) + " Data length:" + str(self.DataLengthOfAllBank()))
         lump=b''
         #Unfold data in DataList list
@@ -340,12 +413,14 @@ class DataBank:
         block_size=len(self.DataList[0])
         num_blocks=len(self.DataList)
         #self.print()
+        #All items in DataList used, clear the memory
         self.DataList.clear()
         self.DataList=[]
         self.r.release()
+        #Build entire bank with header
         BANK=struct.pack(self.LVBANK.format(len(lump)),
                                         self.BANK,self.DATATYPE,
-                                        self.VARCATAGORY,
+                                        self.VARCATEGORY,
                                         self.VARNAME,
                                         self.EQTYPE,
                                         1,2,
