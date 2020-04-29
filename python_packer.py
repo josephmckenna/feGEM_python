@@ -139,7 +139,7 @@ class DataPacker:
             data=data.tobytes()
         #Convert string data to byte array
         elif isinstance(data,str):
-            data=bytearray(str(data), 'utf-8')
+            data=bytearray(str(data)+str('\0'), 'utf-8')
             TYPE=b"STR\0"
         #Unknown data type... maybe the user is logging a 'blob' of data
         elif isinstance(data,bytearray) or isinstance(data,bytes): 
