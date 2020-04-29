@@ -92,8 +92,8 @@ class DataPacker:
 
     """Public member functions:"""
 
-    def AnnounceOnSpeaker(self,message):
-        self.AddData(b"PYSYSMON",b"TALK",b"\0",GetLVTimeNow(),message)
+    def AnnounceOnSpeaker(self,category,message):
+        self.AddData(category,b"TALK",b"\0",GetLVTimeNow(),message)
 
     def GetRunNumber(self):
         #Launch the periodic task to track the RunNumber
@@ -162,26 +162,31 @@ class DataPacker:
 
     """Private member functions"""
     
-    def __init__(self, experiment, flush_time=1):
+    def __init__(self, experiment):
         self.experiment=experiment
         self.DataBanks=[]
         self.context = zmq.Context()
         #  Connect to LabVIEW frontend 'supervisor'
+        self.__connect()
+
+    def __connect(self,flush_time=1):
         print("Connecting to MIDAS server...")
         self.socket = self.context.socket(zmq.REQ)
-        self.socket.connect("tcp://"+experiment+":5555")
+
+        self.socket.connect("tcp://"+self.experiment+":5555")
         print("Connection made... Requesting to start logging")
         start_string=b"START_FRONTEND "+bytes(socket.gethostname(),'utf8')
         self.socket.send(start_string)
         response=self.socket.recv()
+        print(response)
         get_addr=b"GIVE_ME_ADDRESS "+bytes(socket.gethostname(),'utf8')
         self.socket.send(get_addr)
-        address=self.socket.recv()
-        print("Logging to address:"+address.decode("utf-8") )
-        self.socket.disconnect("tcp://"+experiment+":5555")
+        self.address=self.socket.recv()
+        print("Logging to address:"+self.address.decode("utf-8") )
+        self.socket.disconnect("tcp://"+self.experiment+":5555")
 
         # Connect to LabVIEW frontend 'worker' (where we send data)
-        self.socket.connect(address)
+        self.socket.connect(self.address)
         # Request the max data pack size
         get_event_size=b"GIVE_ME_EVENT_SIZE"
         self.socket.send(get_event_size)
@@ -189,13 +194,25 @@ class DataPacker:
         self.__HandleReply(self.socket.recv())
         print("MaxEventSize:"+str(self.MaxEventSize))
         # Start background thread to flush data
-        t1 = threading.Thread(target=self.__Run,args=(flush_time,))
-        t1.start()
+        self.KillThreads=False
+        self.t1 = threading.Thread(target=self.__Run,args=(flush_time,))
+        self.t1.start()
         # Start lightweight background thread to log CPU load
         if HavePsutil:
-            t2 = threading.Thread(target=self.__LogLoad)
-            t2.start()
+            self.t2 = threading.Thread(target=self.__LogLoad)
+            self.t2.start()
         print("Polling thread launched")
+
+    def __stop(self):
+        print("Stopping...")
+        self.KillThreads=True
+        print("Closing socket")
+        #self.socket.disconnect(self.address)
+        self.socket.close()
+        print("Clearing list")
+        self.DataBanks=[]
+        #self.context.destroy()
+        print("done")
 
     #Log CPU load and memory usage once per minute
     def __LogLoad(self):
@@ -203,7 +220,9 @@ class DataPacker:
             CPU=psutil.cpu_percent(60)
             MEM=psutil.virtual_memory().percent
             #print("Logging CPUMEM"+str(CPU)+"  "+str(MEM))
-            self.AddData("PYSYSMON","CPUMEM","",GetLVTimeNow(),[CPU,MEM])
+            self.AddData("THISHOST","CPUMEM","",GetLVTimeNow(),[CPU,MEM])
+            if self.KillThreads:
+                break
 
     #Add a task that is called once per second (eg track RunNumber).(Is private function)
     def __AddPeriodicRequestTask(self,task):
@@ -296,7 +315,9 @@ class DataPacker:
                 print("New unknown exception!!!")
                 exit(1)
         if send_attempt>=try_limit:
-            self.__init__(self.experiment)
+            print("Failed to send after "+str(send_attempt)+" attempts")
+        #    self.__stop()
+        #    self.__connect()
         print("Sent on attempt"+str(send_attempt))
 
     #Recieve data from MIDAS. Always returns a string
@@ -314,8 +335,10 @@ class DataPacker:
                 print("New unknown exception!!!")
                 exit(1)
         if receive_attempt>=try_limit:
-            self.__init__(self.experiment)
-            message="Timeout after "+str(receive_attempt) + " tries"
+            self.__stop()
+            self.__connect()
+            self.AnnounceOnSpeaker("ZMQTimeout","Connection drop detected...")
+            message="[\"Timeout after "+str(receive_attempt) + " tries\"]"
         print("Received reply on attempt "+str(receive_attempt))
         print(message)
         return message
@@ -331,7 +354,7 @@ class DataPacker:
         #Announce I am connection on MIDAS speaker
         connectMsg="New python connection from "+str(socket.gethostname()) + " PROGRAM:"+str(sys.argv)
         print(connectMsg)
-        self.AnnounceOnSpeaker(connectMsg)
+        self.AnnounceOnSpeaker("THISHOST",connectMsg)
         
         # Run forever!
         while True:
@@ -346,17 +369,20 @@ class DataPacker:
                 print("Sending " +str(n) +" banks of data ("+str(len(Bundle)) +" bytes)...")
                 #self.socket.send(Bundle)
                 #print("Sent...")
-                self.__SendWithTimeout(Bundle,100)
+                self.__SendWithTimeout(Bundle,1000)
                 #  Get the reply.
                 #message = self.socket.recv()
                 #print("Received reply [ %s ]" % message)
-                message = self.__RecieveWithTimeout(100)
-                self.__HandleReply(message)
+                message = self.__RecieveWithTimeout(1000)
+                if len(message):
+                    self.__HandleReply(message)
                 if message[0:5]==b"ERROR":
                     print("ERROR reported from MIDAS! FATAL!")
                     os._exit(1)
             else:
                 print("Nothing to flush")
+            if self.KillThreads:
+                break
             time.sleep(sleep_time)
 
 class DataBank:
