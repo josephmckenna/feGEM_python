@@ -13,7 +13,7 @@ import array #Default behaviour is to use array as data type for logging...
 import os
 #External libraries:
 
-import zmq
+#import zmq
 #Numpy is also supported
 try:
     import numpy as np
@@ -164,34 +164,49 @@ class DataPacker:
     
     def __init__(self, experiment):
         self.experiment=experiment
+        self.port=5555
         self.DataBanks=[]
-        self.context = zmq.Context()
         #  Connect to LabVIEW frontend 'supervisor'
         self.__connect()
-
+    def __send_block(self,message,response_size,timeout_limit=5.0):
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.settimeout(timeout_limit)
+        self.socket.connect((self.experiment,self.port))
+        self.socket.send(message)
+        response=self.socket.recv(response_size)
+        self.socket.close()
+        return response
+        
     def __connect(self,flush_time=1):
         print("Connecting to MIDAS server...")
-        self.socket = self.context.socket(zmq.REQ)
-
-        self.socket.connect("tcp://"+self.experiment+":5555")
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        #self.socket.connect((self.experiment,5555))
         print("Connection made... Requesting to start logging")
         start_string=b"START_FRONTEND "+bytes(socket.gethostname(),'utf8')
-        self.socket.send(start_string)
-        response=self.socket.recv()
+        response=self.__send_block(start_string,80)
+        #self.socket.send(start_string)
+        #response=self.socket.recv(80)
         print(response)
         get_addr=b"GIVE_ME_ADDRESS "+bytes(socket.gethostname(),'utf8')
-        self.socket.send(get_addr)
-        self.address=self.socket.recv()
+        
+        #self.socket.send(get_addr)
+        #self.address=self.socket.recv(80)
+        self.address=self.__send_block(get_addr,80)
         print("Logging to address:"+self.address.decode("utf-8") )
-        self.socket.disconnect("tcp://"+self.experiment+":5555")
+
+        get_port=b"GIVE_ME_PORT "+bytes(socket.gethostname(),'utf8')
+        self.port=int(self.__send_block(get_port,80))
+        print("Logging to port:"+str(self.port))
+        #self.socket.disconnect("tcp://"+self.experiment+":5555")
 
         # Connect to LabVIEW frontend 'worker' (where we send data)
-        self.socket.connect(self.address)
+        #self.socket.connect((self.address,int(self.port)))
         # Request the max data pack size
         get_event_size=b"GIVE_ME_EVENT_SIZE"
-        self.socket.send(get_event_size)
+        #self.socket.sendall(get_event_size)
         self.MaxEventSize=-1
-        self.__HandleReply(self.socket.recv())
+        reply=self.__send_block(get_event_size,80)
+        self.__HandleReply(reply)
         print("MaxEventSize:"+str(self.MaxEventSize))
         # Start background thread to flush data
         self.KillThreads=False
@@ -301,47 +316,25 @@ class DataPacker:
         self.__PrintReplyItems(ReplyList,'err:')
 
     #Send formatted data to MIDAS
-    def __SendWithTimeout(self,data,try_limit):
-        send_attempt=0
-        while send_attempt<try_limit:
-            try:
-                self.socket.send(data, zmq.NOBLOCK)
-                break
-            except zmq.error.Again:
-                #print("Retrying"+srt(send_attempt))
-                send_attempt+=1
-                time.sleep(0.01)
-            except Exception:
-                print("New unknown exception!!!")
-                exit(1)
-        if send_attempt>=try_limit:
-            print("Failed to send after "+str(send_attempt)+" attempts")
-        #    self.__stop()
-        #    self.__connect()
-        print("Sent on attempt"+str(send_attempt))
+    def __SendWithTimeout(self,data,timeout_limit=2.0):
+        reply=""
+        try:
+            reply=self.__send_block(data,200,timeout_limit)
+        except socket.timeout:
+            self.AnnounceOnSpeaker("TCPTimeout","Connection drop detected...")
+            print("Failed to send after "+str(timeout_limit)+" seconds")
+        except Exception:
+            print("New unknown exception!!!",sys.exc_info()[0])
+            exit(1)
 
-    #Recieve data from MIDAS. Always returns a string
-    def __RecieveWithTimeout(self,try_limit):
-        receive_attempt=0
-        message=str()
-        while receive_attempt<try_limit:
-            try:
-                message = self.socket.recv(zmq.NOBLOCK)
-                break
-            except zmq.error.Again:
-                receive_attempt+=1
-                time.sleep(0.01)
-            except Exception:
-                print("New unknown exception!!!")
-                exit(1)
-        if receive_attempt>=try_limit:
-            self.__stop()
-            self.__connect()
-            self.AnnounceOnSpeaker("ZMQTimeout","Connection drop detected...")
-            message="[\"Timeout after "+str(receive_attempt) + " tries\"]"
-        print("Received reply on attempt "+str(receive_attempt))
-        print(message)
-        return message
+        if len(reply):
+            self.__HandleReply(reply)
+            if reply[0:5]==b"ERROR":
+                print("ERROR reported from MIDAS! FATAL!")
+                os._exit(1)
+        #print("Sent on attempt"+str(send_attempt))
+        print("Data sent and received reply")
+        return
 
     def CheckDataLength(self,length):
         if (length>self.MaxEventSize):
@@ -369,16 +362,7 @@ class DataPacker:
                 print("Sending " +str(n) +" banks of data ("+str(len(Bundle)) +" bytes)...")
                 #self.socket.send(Bundle)
                 #print("Sent...")
-                self.__SendWithTimeout(Bundle,1000)
-                #  Get the reply.
-                #message = self.socket.recv()
-                #print("Received reply [ %s ]" % message)
-                message = self.__RecieveWithTimeout(1000)
-                if len(message):
-                    self.__HandleReply(message)
-                if message[0:5]==b"ERROR":
-                    print("ERROR reported from MIDAS! FATAL!")
-                    os._exit(1)
+                self.__SendWithTimeout(Bundle,2.0)
             else:
                 print("Nothing to flush")
             if self.KillThreads:
