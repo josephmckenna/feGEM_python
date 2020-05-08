@@ -1,7 +1,8 @@
+#!python3
 from python_packer import *
 
 #Global data packer
-packer=DataPacker("alphamidastest8")
+packer=DataPacker("alphamidastest8",max_event_size=100000)
 
 
 
@@ -13,6 +14,7 @@ class SimulateData:
     def GenerateArray(self, wait_time=1):
         #data=struct.pack('10d',0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0)
         #print("Adding data")
+        #packer.AnnounceOnSpeaker("THISHOST","LONG MESSAGE STRING THAT WILL TAKE SOME TIME TO READ OUT AND SOME MORE TIME")
         packer.AddData(self.category,self.varname,self.description,GetLVTimeNow(),array.array('d',[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]))
         time.sleep(wait_time)
     def GenerateNpArray(self, wait_time=1):
