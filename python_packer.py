@@ -162,17 +162,20 @@ class DataPacker:
 
     """Private member functions"""
     
-    def __init__(self, experiment):
+    def __init__(self, experiment,max_event_size=0):
         self.experiment=experiment
         self.port=5555
         self.DataBanks=[]
+        self.BankArrayID=0
+        if max_event_size:
+           self.AddData("CMD","SET_EVENT_SIZE","",GetLVTimeNow(),"SET_EVENT_SIZE "+str(max_event_size))
         #  Connect to LabVIEW frontend 'supervisor'
         self.__connect()
-    def __send_block(self,message,response_size,timeout_limit=5.0):
+    def __send_block(self,message,response_size,timeout_limit=10.0):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.settimeout(timeout_limit)
         self.socket.connect((self.experiment,self.port))
-        self.socket.send(message)
+        self.socket.sendall(message)
         response=self.socket.recv(response_size)
         self.socket.close()
         return response
@@ -187,6 +190,7 @@ class DataPacker:
         #self.socket.send(start_string)
         #response=self.socket.recv(80)
         print(response)
+        
         get_addr=b"GIVE_ME_ADDRESS "+bytes(socket.gethostname(),'utf8')
         
         #self.socket.send(get_addr)
@@ -200,13 +204,10 @@ class DataPacker:
         #self.socket.disconnect("tcp://"+self.experiment+":5555")
 
         # Connect to LabVIEW frontend 'worker' (where we send data)
-        #self.socket.connect((self.address,int(self.port)))
         # Request the max data pack size
-        get_event_size=b"GIVE_ME_EVENT_SIZE"
-        #self.socket.sendall(get_event_size)
         self.MaxEventSize=-1
-        reply=self.__send_block(get_event_size,80)
-        self.__HandleReply(reply)
+        self.AddData("THISHOST","GET_EVENT_SIZE","",GetLVTimeNow(),str("\0"))
+        self.__SendWithTimeout(self.__Flush());
         print("MaxEventSize:"+str(self.MaxEventSize))
         # Start background thread to flush data
         self.KillThreads=False
@@ -276,12 +277,13 @@ class DataPacker:
             bank=bank.Flush()
             lump=struct.pack('{}s{}s'.format(len(lump),len(bank)),lump,bank)
             number_of_banks+=1
-        super_bank=struct.pack('4s4sII{}s'.format(len(lump)),
+        super_bank=struct.pack('4sIII{}s'.format(len(lump)),
                                         b"PYA1",
-                                        b"PADD",
+                                        self.BankArrayID,
                                         len(lump),
                                         number_of_banks,
                                         lump)
+        self.BankArrayID=self.BankArrayID+1
         print("Size of lump in super bank:"+str(len(lump))+"("+str(number_of_banks)+" banks)")
         return super_bank
 
