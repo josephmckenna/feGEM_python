@@ -171,43 +171,39 @@ class DataPacker:
            self.AddData("CMD","SET_EVENT_SIZE","",GetLVTimeNow(),"SET_EVENT_SIZE "+str(max_event_size))
         #  Connect to LabVIEW frontend 'supervisor'
         self.__connect()
-    def __send_block(self,message,response_size,timeout_limit=10.0):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.settimeout(timeout_limit)
-        self.socket.connect((self.experiment,self.port))
-        self.socket.sendall(message)
-        response=self.socket.recv(response_size)
-        self.socket.close()
-        return response
-        
+
     def __connect(self,flush_time=1):
         print("Connecting to MIDAS server...")
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         #self.socket.connect((self.experiment,5555))
         print("Connection made... Requesting to start logging")
         start_string=b"START_FRONTEND "+bytes(socket.gethostname(),'utf8')
-        response=self.__send_block(start_string,80)
+        response=self.__send_block(start_string,128)
         #self.socket.send(start_string)
         #response=self.socket.recv(80)
-        print(response)
+        #print(response)
         
         get_addr=b"GIVE_ME_ADDRESS "+bytes(socket.gethostname(),'utf8')
         
         #self.socket.send(get_addr)
         #self.address=self.socket.recv(80)
-        self.address=self.__send_block(get_addr,80)
-        print("Logging to address:"+self.address.decode("utf-8") )
+        #self.address=self.__send_block(get_addr,80)
+        self.__HandleReply(self.__send_block(get_addr,128))
+        #print("Logging to address:"+self.address.decode("utf-8") )
+        print("Logging to address:"+self.address )
 
         get_port=b"GIVE_ME_PORT "+bytes(socket.gethostname(),'utf8')
-        self.port=int(self.__send_block(get_port,80))
+        #self.port=int(self.__send_block(get_port,80))
+        self.__HandleReply(self.__send_block(get_port,128))
         print("Logging to port:"+str(self.port))
         #self.socket.disconnect("tcp://"+self.experiment+":5555")
 
         # Connect to LabVIEW frontend 'worker' (where we send data)
         # Request the max data pack size
         self.MaxEventSize=-1
-        self.AddData("THISHOST","GET_EVENT_SIZE","",GetLVTimeNow(),str("\0"))
-        self.__SendWithTimeout(self.__Flush());
+        while self.MaxEventSize<0:
+           self.AddData("THISHOST","GET_EVENT_SIZE","",GetLVTimeNow(),str("\0"))
+           self.__SendWithTimeout(self.__Flush());
         print("MaxEventSize:"+str(self.MaxEventSize))
         # Start background thread to flush data
         self.KillThreads=False
@@ -314,17 +310,40 @@ class DataPacker:
         tmp=self.__ParseReplyItem(ReplyList,'STATUS:')
         if tmp:
             self.RunStatus=tmp
+        tmp=self.__ParseReplyItem(ReplyList,'SendToAddress:')
+        if tmp:
+            self.address=tmp
+        tmp=self.__ParseReplyItem(ReplyList,'SendToPort:')
+        if tmp:
+            self.port=int(tmp)
         self.__PrintReplyItems(ReplyList,'msg:')
         self.__PrintReplyItems(ReplyList,'err:')
 
+    def __send_block(self,message,response_size,timeout_limit=10.0):
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.settimeout(timeout_limit)
+        self.socket.connect((self.experiment,self.port))
+        self.socket.sendall(message)
+        response=b""
+        #Read until end of json message
+        while not response.endswith(b"\"]"):
+           response+=self.socket.recv(response_size)
+           print(response)
+        self.socket.shutdown(socket.SHUT_WR)
+        self.socket.close()
+        return response
+
     #Send formatted data to MIDAS
-    def __SendWithTimeout(self,data,timeout_limit=2.0):
+    def __SendWithTimeout(self,data,timeout_limit=10.0):
         reply=""
         try:
-            reply=self.__send_block(data,200,timeout_limit)
+            reply=self.__send_block(data,1024,timeout_limit)
         except socket.timeout:
             self.AnnounceOnSpeaker("TCPTimeout","Connection drop detected...")
             print("Failed to send after "+str(timeout_limit)+" seconds")
+        except ConnectionResetError:
+            print("Connection got reset... try again...")
+            self.__SendWithTimeout(data,timout_limit)
         except Exception:
             print("New unknown exception!!!",sys.exc_info()[0])
             exit(1)
@@ -335,7 +354,7 @@ class DataPacker:
                 print("ERROR reported from MIDAS! FATAL!")
                 os._exit(1)
         #print("Sent on attempt"+str(send_attempt))
-        print("Data sent and received reply")
+        print("Data sent and received reply:"+str(reply))
         return
 
     def CheckDataLength(self,length):
@@ -364,7 +383,7 @@ class DataPacker:
                 print("Sending " +str(n) +" banks of data ("+str(len(Bundle)) +" bytes)...")
                 #self.socket.send(Bundle)
                 #print("Sent...")
-                self.__SendWithTimeout(Bundle,2.0)
+                self.__SendWithTimeout(Bundle,10.0)
             else:
                 print("Nothing to flush")
             if self.KillThreads:
