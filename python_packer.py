@@ -167,47 +167,36 @@ class DataPacker:
         self.port=5555
         self.DataBanks=[]
         self.BankArrayID=0
-        if max_event_size:
-           self.AddData("CMD","SET_EVENT_SIZE","",GetLVTimeNow(),"SET_EVENT_SIZE "+str(max_event_size))
+        self.MaxEventSize=max_event_size
         #  Connect to LabVIEW frontend 'supervisor'
         self.__connect()
 
-    def __connect(self,flush_time=1):
+    def __connect(self):
         print("Connecting to MIDAS server...")
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        #self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         #self.socket.connect((self.experiment,5555))
         print("Connection made... Requesting to start logging")
-        start_string=b"START_FRONTEND "+bytes(socket.gethostname(),'utf8')
-        response=self.__send_block(start_string,128)
-        #self.socket.send(start_string)
-        #response=self.socket.recv(80)
-        #print(response)
-        
-        get_addr=b"GIVE_ME_ADDRESS "+bytes(socket.gethostname(),'utf8')
-        
-        #self.socket.send(get_addr)
-        #self.address=self.socket.recv(80)
-        #self.address=self.__send_block(get_addr,80)
-        self.__HandleReply(self.__send_block(get_addr,128))
-        #print("Logging to address:"+self.address.decode("utf-8") )
-        print("Logging to address:"+self.address )
-
-        get_port=b"GIVE_ME_PORT "+bytes(socket.gethostname(),'utf8')
-        #self.port=int(self.__send_block(get_port,80))
-        self.__HandleReply(self.__send_block(get_port,128))
-        print("Logging to port:"+str(self.port))
-        #self.socket.disconnect("tcp://"+self.experiment+":5555")
+        #Negociate connection to worker frontend
+        self.FrontendStatus=""
+        self.address=self.experiment
+        while len(self.FrontendStatus)==0:
+            self.AddData("THISHOST","START_FRONTEND", "",GetLVTimeNow(),socket.gethostname())
+            self.AddData("THISHOST","GIVE_ME_ADDRESS","",GetLVTimeNow(),socket.gethostname())
+            self.AddData("THISHOST","GIVE_ME_PORT",   "",GetLVTimeNow(),socket.gethostname())
+            self.__SendWithTimeout(self.__Flush());
 
         # Connect to LabVIEW frontend 'worker' (where we send data)
         # Request the max data pack size
+        if self.MaxEventSize:
+           self.AddData("CMD","SET_EVENT_SIZE","",GetLVTimeNow(),"SET_EVENT_SIZE "+str(self.MaxEventSize))
         self.MaxEventSize=-1
         while self.MaxEventSize<0:
-           self.AddData("THISHOST","GET_EVENT_SIZE","",GetLVTimeNow(),str("\0"))
-           self.__SendWithTimeout(self.__Flush());
+            self.AddData("THISHOST","GET_EVENT_SIZE","",GetLVTimeNow(),str("\0"))
+            self.__SendWithTimeout(self.__Flush());
         print("MaxEventSize:"+str(self.MaxEventSize))
         # Start background thread to flush data
         self.KillThreads=False
-        self.t1 = threading.Thread(target=self.__Run,args=(flush_time,))
+        self.t1 = threading.Thread(target=self.__Run)
         self.t1.start()
         # Start lightweight background thread to log CPU load
         if HavePsutil:
@@ -316,6 +305,9 @@ class DataPacker:
         tmp=self.__ParseReplyItem(ReplyList,'SendToPort:')
         if tmp:
             self.port=int(tmp)
+        tmp=self.__ParseReplyItem(ReplyList,'FrontendStatus:')
+        if tmp:
+            self.FrontendStatus=tmp
         self.__PrintReplyItems(ReplyList,'msg:')
         self.__PrintReplyItems(ReplyList,'err:')
 
@@ -364,7 +356,8 @@ class DataPacker:
             os._exit(1)
 
     #Main (forever) loop for flushing the queues... run as its own thread
-    def __Run(self,sleep_time=1):
+    def __Run(self,periodic_flush_time=1):
+        sleep_time=periodic_flush_time
         #Announce I am connection on MIDAS speaker
         connectMsg="New python connection from "+str(socket.gethostname()) + " PROGRAM:"+str(sys.argv)
         print(connectMsg)
