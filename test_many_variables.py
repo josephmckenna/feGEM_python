@@ -1,7 +1,7 @@
 from python_packer import *
 
 #Global data packer
-packer=DataPacker("alphamidastest8")
+packer=DataPacker("alphamidastest8",1000000)
 
 
 
@@ -37,7 +37,7 @@ DataGenerators=list()
 for i in range(10): #10 Categories
     for j in range(20): #20 Variables
         DataGenerators.append(SimulateData(BaseName+str(i),"Array"+str(j),"PythonSimulated spam"))
-time.sleep(10)
+time.sleep(3)
 while True:
     for i in range(10000):
         for j in DataGenerators:
