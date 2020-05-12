@@ -188,7 +188,7 @@ class DataPacker:
         # Connect to LabVIEW frontend 'worker' (where we send data)
         # Request the max data pack size
         if self.MaxEventSize:
-           self.AddData("CMD","SET_EVENT_SIZE","",GetLVTimeNow(),"SET_EVENT_SIZE "+str(self.MaxEventSize))
+           self.AddData("CMD","SET_EVENT_SIZE","",GetLVTimeNow(),str(self.MaxEventSize))
         self.MaxEventSize=-1
         while self.MaxEventSize<0:
             self.AddData("THISHOST","GET_EVENT_SIZE","",GetLVTimeNow(),str("\0"))
