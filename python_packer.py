@@ -93,7 +93,7 @@ class DataPacker:
     """Public member functions:"""
 
     def AnnounceOnSpeaker(self,category,message):
-        self.AddData(category,b"TALK",b"\0",GetLVTimeNow(),message)
+        self.AddData(category,b"TALK",b"\0",0,GetLVTimeNow(),message)
 
     def GetRunNumber(self):
         #Launch the periodic task to track the RunNumber
@@ -110,7 +110,7 @@ class DataPacker:
             time.sleep(0.1)
         return self.RunStatus
 
-    def AddData(self, category, varname, description, timestamp, data):
+    def AddData(self, category, varname, description, history_rate, timestamp, data):
         #Clean up input strings... (convert str to bytes and trim length)
         category=CleanString(category,16)
         varname=CleanString(varname,16)
@@ -156,8 +156,8 @@ class DataPacker:
                 bank.AddData(timestamp,data)
                 return
         #Matching bank not found in list... add this new bank to DataBanks list
-        self.DataBanks.append(DataBank(TYPE,category,varname,description))
-        self.AddData(category, varname, description, timestamp, data)
+        self.DataBanks.append(DataBank(TYPE,category,varname,description,history_rate))
+        self.AddData(category, varname, description, history_rate, timestamp, data)
 
 
     """Private member functions"""
@@ -180,18 +180,18 @@ class DataPacker:
         self.FrontendStatus=""
         self.address=self.experiment
         while len(self.FrontendStatus)==0:
-            self.AddData("THISHOST","START_FRONTEND", "",GetLVTimeNow(),socket.gethostname())
-            self.AddData("THISHOST","GIVE_ME_ADDRESS","",GetLVTimeNow(),socket.gethostname())
-            self.AddData("THISHOST","GIVE_ME_PORT",   "",GetLVTimeNow(),socket.gethostname())
-            self.__SendWithTimeout(self.__Flush());
+            self.AddData("THISHOST","START_FRONTEND", "",0,GetLVTimeNow(),socket.gethostname())
+            self.AddData("THISHOST","GIVE_ME_ADDRESS","",0,GetLVTimeNow(),socket.gethostname())
+            self.AddData("THISHOST","GIVE_ME_PORT",   "",0,GetLVTimeNow(),socket.gethostname())
+            self.__SendWithTimeout(self.__Flush(),1000);
 
         # Connect to LabVIEW frontend 'worker' (where we send data)
         # Request the max data pack size
         if self.MaxEventSize:
-           self.AddData("CMD","SET_EVENT_SIZE","",GetLVTimeNow(),str(self.MaxEventSize))
+           self.AddData("CMD","SET_EVENT_SIZE","",0,GetLVTimeNow(),str(self.MaxEventSize))
         self.MaxEventSize=-1
         while self.MaxEventSize<0:
-            self.AddData("THISHOST","GET_EVENT_SIZE","",GetLVTimeNow(),str("\0"))
+            self.AddData("THISHOST","GET_EVENT_SIZE","",0,GetLVTimeNow(),str("\0"))
             self.__SendWithTimeout(self.__Flush());
         print("MaxEventSize:"+str(self.MaxEventSize))
         # Start background thread to flush data
@@ -221,7 +221,7 @@ class DataPacker:
             CPU=psutil.cpu_percent(60)
             MEM=psutil.virtual_memory().percent
             #print("Logging CPUMEM"+str(CPU)+"  "+str(MEM))
-            self.AddData("THISHOST","CPUMEM","",GetLVTimeNow(),[CPU,MEM])
+            self.AddData("THISHOST","CPUMEM","",0,GetLVTimeNow(),[CPU,MEM])
             if self.KillThreads:
                 break
 
@@ -370,7 +370,7 @@ class DataPacker:
         while True:
             # Execute periodic tasks (RunNumber tracking etc)
             for task in self.PeriodicTasks:
-                self.AddData(b"PERIODIC",bytes(task,'utf-8'),b"\0",GetLVTimeNow(),str("\0"))
+                self.AddData(b"PERIODIC",bytes(task,'utf-8'),b"\0",0,GetLVTimeNow(),str("\0"))
             # Flatten data in memory and send to MIDAS (if there is any data)
             n=self.__BanksToFlush()
             if n > 0:
@@ -396,7 +396,7 @@ class DataBank:
     r = threading.RLock()
 
     #Arguments must be bytes... assert statements enforce this
-    def __init__(self, datatype, category, varname,eqtype):
+    def __init__(self, datatype, category, varname,eqtype,rate):
         self.BANK=b"PYB1"
         assert(isinstance(datatype,bytes))
         self.DATATYPE=datatype
@@ -406,6 +406,7 @@ class DataBank:
         self.VARNAME=varname
         assert(isinstance(eqtype,bytes))
         self.EQTYPE=eqtype
+        self.HistoryRate=rate
         self.DataList=[]
 
     def IsBankMatch(self,category,varname):
@@ -474,7 +475,7 @@ class DataBank:
                                         self.VARCATEGORY,
                                         self.VARNAME,
                                         self.EQTYPE,
-                                        1,2,
+                                        self.HistoryRate,2,
                                         block_size,num_blocks,
                                         lump)
         return BANK
