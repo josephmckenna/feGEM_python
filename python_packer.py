@@ -86,7 +86,7 @@ def CleanString(arg,length):
 """Main DataPacker Object... use it as a global object, its thread safe"""
 class DataPacker:
     """I have list of DataBanks"""
-    RunNumber=-1
+    RunNumber=-99
     RunStatus=str()
     PeriodicTasks=list()
 
@@ -99,7 +99,7 @@ class DataPacker:
         #Launch the periodic task to track the RunNumber
         self.__AddPeriodicRequestTask("GET_RUNNO")
         #Wait until we have a valid RunNumber (happens on first call only)
-        while self.RunNumber < 0:
+        while self.RunNumber < -1:
            time.sleep(0.1)
         return self.RunNumber
 
@@ -296,7 +296,7 @@ class DataPacker:
         tmp=self.__ParseReplyItem(ReplyList,'EventSize:')
         if tmp:
             self.MaxEventSize=int(tmp)
-        tmp=self.__ParseReplyItem(ReplyList,'STATUS:')
+        tmp=self.__ParseReplyItem(ReplyList,'RunStatus:')
         if tmp:
             self.RunStatus=tmp
         tmp=self.__ParseReplyItem(ReplyList,'SendToAddress:')
@@ -308,6 +308,9 @@ class DataPacker:
         tmp=self.__ParseReplyItem(ReplyList,'FrontendStatus:')
         if tmp:
             self.FrontendStatus=tmp
+        tmp=self.__ParseReplyItem(ReplyList,'MIDASTime:')
+        if tmp:
+            self.MIDASTime=float(tmp)
         self.__PrintReplyItems(ReplyList,'msg:')
         self.__PrintReplyItems(ReplyList,'err:')
 
