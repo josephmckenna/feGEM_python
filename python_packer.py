@@ -323,7 +323,7 @@ class DataPacker:
         #Read until end of json message
         while not response.endswith(b"\"]"):
            response+=self.socket.recv(response_size)
-           print(response)
+           #print(response)
         self.socket.shutdown(socket.SHUT_WR)
         self.socket.close()
         return response
