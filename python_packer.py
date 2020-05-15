@@ -42,7 +42,7 @@ def GetLVTimeNow():
     seconds=int(lvtime-fraction)
     lvfraction=int(fraction*pow(2,64))
     #Pack timestamp into 128 bit struct
-    LVTimestamp=struct.pack('qQ',seconds,lvfraction)
+    LVTimestamp=struct.pack('>qQ',seconds,lvfraction)
     return LVTimestamp
 
 #This is hand coded... someone please check my calculation... check timezones?
@@ -181,6 +181,7 @@ class DataPacker:
         self.address=self.experiment
         while len(self.FrontendStatus)==0:
             self.AddData("THISHOST","START_FRONTEND", "",0,GetLVTimeNow(),socket.gethostname())
+            self.AddData("THISHOST","ALLOW_HOST", "",0,GetLVTimeNow(),socket.gethostname())
             self.AddData("THISHOST","GIVE_ME_ADDRESS","",0,GetLVTimeNow(),socket.gethostname())
             self.AddData("THISHOST","GIVE_ME_PORT",   "",0,GetLVTimeNow(),socket.gethostname())
             self.__SendWithTimeout(self.__Flush(),1000);
@@ -289,6 +290,7 @@ class DataPacker:
     #Parse the json string MIDAS sends as a reply to data
     def __HandleReply(self, reply):
         #Unfold the json string into a list
+        #ReplyList=json.loads(reply.decode("utf-8","ignore"), strict=False)
         ReplyList=json.loads(reply)
         tmp=self.__ParseReplyItem(ReplyList,'RunNumber:')
         if tmp:
@@ -338,6 +340,9 @@ class DataPacker:
             print("Failed to send after "+str(timeout_limit)+" seconds")
         except ConnectionResetError:
             print("Connection got reset... try again...")
+            self.__SendWithTimeout(data,timout_limit)
+        except ConnectionRefusedError:
+            print("Connection got refused... try again...")
             self.__SendWithTimeout(data,timout_limit)
         except Exception:
             print("New unknown exception!!!",sys.exc_info()[0])
