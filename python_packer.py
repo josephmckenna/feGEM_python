@@ -340,10 +340,10 @@ class DataPacker:
             print("Failed to send after "+str(timeout_limit)+" seconds")
         except ConnectionResetError:
             print("Connection got reset... try again...")
-            self.__SendWithTimeout(data,timout_limit)
+            self.__SendWithTimeout(data,timeout_limit)
         except ConnectionRefusedError:
             print("Connection got refused... try again...")
-            self.__SendWithTimeout(data,timout_limit)
+            self.__SendWithTimeout(data,timeout_limit)
         except Exception:
             print("New unknown exception!!!",sys.exc_info()[0])
             exit(1)
@@ -435,10 +435,10 @@ class DataBank:
         #Pack timestamp and data array into LVDATA format
         lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,data)
         #Check the length of the last array matches the first
+        self.r.acquire()
         if len(self.DataList) > 0:
             assert len(self.DataList[0]) == len(lvdata)
         #Add this LVDATA to a list for later flattening (thread safe)
-        self.r.acquire()
         self.DataList.append(lvdata)
         self.r.release()
 
