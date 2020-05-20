@@ -221,8 +221,8 @@ class DataPacker:
         while True:
             CPU=psutil.cpu_percent(60)
             MEM=psutil.virtual_memory().percent
-            #print("Logging CPUMEM"+str(CPU)+"  "+str(MEM))
-            self.AddData("THISHOST","CPUMEM","",0,GetLVTimeNow(),[CPU,MEM])
+            print("Logging CPUMEM"+str(CPU)+"  "+str(MEM))
+            self.AddData("THISHOST","CPUMEM","",10,GetLVTimeNow(),[CPU,MEM])
             if self.KillThreads:
                 break
 
@@ -463,17 +463,19 @@ class DataBank:
             return
         #print("Banks to flush:" + str(self.NumberToFlush() ) + " Data length:" + str(self.DataLengthOfAllBank()))
         lump=b''
-        #Unfold data in DataList list
-        for data in self.DataList:
-           lump=struct.pack('{}s{}s'.format(len(lump),len(data)),lump,data)
-        #Dimensions of LVDATA in BANK
-        block_size=len(self.DataList[0])
-        num_blocks=len(self.DataList)
-        #self.print()
-        #All items in DataList used, clear the memory
-        self.DataList.clear()
+        LocalList=self.DataList
         self.DataList=[]
         self.r.release()
+        #Unfold data in DataList list
+        for data in LocalList:
+           lump=struct.pack('{}s{}s'.format(len(lump),len(data)),lump,data)
+        #Dimensions of LVDATA in BANK
+        block_size=len(LocalList[0])
+        num_blocks=len(LocalList)
+        #self.print()
+        #All items in DataList used, clear the memory
+        LocalList.clear()
+        
         #Build entire bank with header
         BANK=struct.pack(self.LVBANK.format(len(lump)),
                                         self.BANK,self.DATATYPE,
