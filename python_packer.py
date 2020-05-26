@@ -31,6 +31,16 @@ except:
     HavePsutil=False
     print("psutil not found... please install it to log the CPU load on this machine (requires python3-devel)")
 
+
+DataByteOrder=0
+if sys.byteorder=='little':
+   DataByteOrder=2
+elif sys.byteorder=='big':
+   DataByteOrder=1;
+else:
+   print("Byte order not recognised")
+   exit(1)
+
 """Timestamp functions"""
 def GetLVTimeNow():
     #Get UNIX time now
@@ -42,7 +52,7 @@ def GetLVTimeNow():
     seconds=int(lvtime-fraction)
     lvfraction=int(fraction*pow(2,64))
     #Pack timestamp into 128 bit struct
-    LVTimestamp=struct.pack('>qQ',seconds,lvfraction)
+    LVTimestamp=struct.pack('qQ',seconds,lvfraction)
     return LVTimestamp
 
 #This is hand coded... someone please check my calculation... check timezones?
@@ -395,7 +405,7 @@ class DataBank:
     #LVBANK and LVDATA description: https://alphacpc05.cern.ch/elog/ALPHA/25025
     LVBANKHEADERSIZE=88
     #LVBANK Header format
-    LVBANK='4s4s16s16s32siiii{}s'
+    LVBANK='4s4s16s16s32sihhii{}s'
     #LVDATA Header format
     LVDATA='16s{}s'
     r = threading.RLock()
@@ -415,8 +425,11 @@ class DataBank:
         self.DataList=[]
 
     def IsBankMatch(self,category,varname):
-        if (self.VARCATEGORY==category) and (self.VARNAME==varname):
-            return True
+        if (self.VARCATEGORY==category):
+            if (self.VARNAME==varname):
+                return True
+            else:
+                return False
         else:
             return False
 
@@ -482,7 +495,9 @@ class DataBank:
                                         self.VARCATEGORY,
                                         self.VARNAME,
                                         self.EQTYPE,
-                                        self.HistoryRate,2,
+                                        self.HistoryRate,
+                                        DataByteOrder, # Timestamp byte order
+                                        DataByteOrder, # Data byte order
                                         block_size,num_blocks,
                                         lump)
         return BANK
