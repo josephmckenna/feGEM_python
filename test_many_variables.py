@@ -1,7 +1,7 @@
 from python_packer import *
 
 #Global data packer
-packer=DataPacker("alphamidastest8")
+packer=DataPacker("alphamidastest8",10000000) #10M
 
 
 
@@ -10,20 +10,22 @@ class SimulateData:
         self.category=category
         self.varname=varname
         self.description=description
+        self.history_rate=1
     def GenerateArray(self, wait_time=1):
         #data=struct.pack('10d',0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0)
         #print("Adding data")
-        packer.AddData(self.category,self.varname,self.description,GetLVTimeNow(),array.array('d',[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]))
+        #packer.AnnounceOnSpeaker("THISHOST","LONG MESSAGE STRING THAT WILL TAKE SOME TIME TO READ OUT AND SOME MORE TIME")
+        packer.AddData(self.category,self.varname,self.description,self.history_rate,GetLVTimeNow(),array.array('d',[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]))
         time.sleep(wait_time)
     def GenerateNpArray(self, wait_time=1):
         if HaveNumpy:
-            packer.AddData(self.category,self.varname,self.description,GetLVTimeNow(),np.array([0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0],dtype = 'float64'))
+            packer.AddData(self.category,self.varname,self.description,self.history_rate,GetLVTimeNow(),np.array([0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0],dtype = 'float64'))
         else:
             print("Please install numpy")
             exit(1)
         time.sleep(wait_time)
     def GenerateList(self,wait_time=1):
-        packer.AddData(self.category,self.varname,self.description,GetLVTimeNow(),[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0])
+        packer.AddData(self.category,self.varname,self.description,self.history_rate,GetLVTimeNow(),[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0])
         time.sleep(wait_time)
 
 print("Current Run Number: "+str(packer.GetRunNumber()))
@@ -37,7 +39,7 @@ DataGenerators=list()
 for i in range(10): #10 Categories
     for j in range(20): #20 Variables
         DataGenerators.append(SimulateData(BaseName+str(i),"Array"+str(j),"PythonSimulated spam"))
-time.sleep(10)
+time.sleep(3)
 while True:
     for i in range(10000):
         for j in DataGenerators:

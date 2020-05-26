@@ -13,7 +13,7 @@ import array #Default behaviour is to use array as data type for logging...
 import os
 #External libraries:
 
-import zmq
+#import zmq
 #Numpy is also supported
 try:
     import numpy as np
@@ -42,7 +42,7 @@ def GetLVTimeNow():
     seconds=int(lvtime-fraction)
     lvfraction=int(fraction*pow(2,64))
     #Pack timestamp into 128 bit struct
-    LVTimestamp=struct.pack('qQ',seconds,lvfraction)
+    LVTimestamp=struct.pack('>qQ',seconds,lvfraction)
     return LVTimestamp
 
 #This is hand coded... someone please check my calculation... check timezones?
@@ -86,20 +86,20 @@ def CleanString(arg,length):
 """Main DataPacker Object... use it as a global object, its thread safe"""
 class DataPacker:
     """I have list of DataBanks"""
-    RunNumber=-1
+    RunNumber=-99
     RunStatus=str()
     PeriodicTasks=list()
 
     """Public member functions:"""
 
     def AnnounceOnSpeaker(self,category,message):
-        self.AddData(category,b"TALK",b"\0",GetLVTimeNow(),message)
+        self.AddData(category,b"TALK",b"\0",0,GetLVTimeNow(),message)
 
     def GetRunNumber(self):
         #Launch the periodic task to track the RunNumber
         self.__AddPeriodicRequestTask("GET_RUNNO")
         #Wait until we have a valid RunNumber (happens on first call only)
-        while self.RunNumber < 0:
+        while self.RunNumber < -1:
            time.sleep(0.1)
         return self.RunNumber
 
@@ -110,7 +110,7 @@ class DataPacker:
             time.sleep(0.1)
         return self.RunStatus
 
-    def AddData(self, category, varname, description, timestamp, data):
+    def AddData(self, category, varname, description, history_rate, timestamp, data):
         #Clean up input strings... (convert str to bytes and trim length)
         category=CleanString(category,16)
         varname=CleanString(varname,16)
@@ -156,46 +156,48 @@ class DataPacker:
                 bank.AddData(timestamp,data)
                 return
         #Matching bank not found in list... add this new bank to DataBanks list
-        self.DataBanks.append(DataBank(TYPE,category,varname,description))
-        self.AddData(category, varname, description, timestamp, data)
+        self.DataBanks.append(DataBank(TYPE,category,varname,description,history_rate))
+        self.AddData(category, varname, description, history_rate, timestamp, data)
 
 
     """Private member functions"""
     
-    def __init__(self, experiment):
+    def __init__(self, experiment,max_event_size=0):
         self.experiment=experiment
+        self.port=5555
         self.DataBanks=[]
-        self.context = zmq.Context()
+        self.BankArrayID=0
+        self.MaxEventSize=max_event_size
         #  Connect to LabVIEW frontend 'supervisor'
         self.__connect()
 
-    def __connect(self,flush_time=1):
+    def __connect(self):
         print("Connecting to MIDAS server...")
-        self.socket = self.context.socket(zmq.REQ)
-
-        self.socket.connect("tcp://"+self.experiment+":5555")
+        #self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        #self.socket.connect((self.experiment,5555))
         print("Connection made... Requesting to start logging")
-        start_string=b"START_FRONTEND "+bytes(socket.gethostname(),'utf8')
-        self.socket.send(start_string)
-        response=self.socket.recv()
-        print(response)
-        get_addr=b"GIVE_ME_ADDRESS "+bytes(socket.gethostname(),'utf8')
-        self.socket.send(get_addr)
-        self.address=self.socket.recv()
-        print("Logging to address:"+self.address.decode("utf-8") )
-        self.socket.disconnect("tcp://"+self.experiment+":5555")
+        #Negociate connection to worker frontend
+        self.FrontendStatus=""
+        self.address=self.experiment
+        while len(self.FrontendStatus)==0:
+            self.AddData("THISHOST","START_FRONTEND", "",0,GetLVTimeNow(),socket.gethostname())
+            self.AddData("THISHOST","ALLOW_HOST", "",0,GetLVTimeNow(),socket.gethostname())
+            self.AddData("THISHOST","GIVE_ME_ADDRESS","",0,GetLVTimeNow(),socket.gethostname())
+            self.AddData("THISHOST","GIVE_ME_PORT",   "",0,GetLVTimeNow(),socket.gethostname())
+            self.__SendWithTimeout(self.__Flush(),1000);
 
         # Connect to LabVIEW frontend 'worker' (where we send data)
-        self.socket.connect(self.address)
         # Request the max data pack size
-        get_event_size=b"GIVE_ME_EVENT_SIZE"
-        self.socket.send(get_event_size)
+        if self.MaxEventSize:
+           self.AddData("CMD","SET_EVENT_SIZE","",0,GetLVTimeNow(),str(self.MaxEventSize))
         self.MaxEventSize=-1
-        self.__HandleReply(self.socket.recv())
+        while self.MaxEventSize<0:
+            self.AddData("THISHOST","GET_EVENT_SIZE","",0,GetLVTimeNow(),str("\0"))
+            self.__SendWithTimeout(self.__Flush());
         print("MaxEventSize:"+str(self.MaxEventSize))
         # Start background thread to flush data
         self.KillThreads=False
-        self.t1 = threading.Thread(target=self.__Run,args=(flush_time,))
+        self.t1 = threading.Thread(target=self.__Run)
         self.t1.start()
         # Start lightweight background thread to log CPU load
         if HavePsutil:
@@ -219,8 +221,8 @@ class DataPacker:
         while True:
             CPU=psutil.cpu_percent(60)
             MEM=psutil.virtual_memory().percent
-            #print("Logging CPUMEM"+str(CPU)+"  "+str(MEM))
-            self.AddData("THISHOST","CPUMEM","",GetLVTimeNow(),[CPU,MEM])
+            print("Logging CPUMEM"+str(CPU)+"  "+str(MEM))
+            self.AddData("THISHOST","CPUMEM","",10,GetLVTimeNow(),[CPU,MEM])
             if self.KillThreads:
                 break
 
@@ -261,12 +263,13 @@ class DataPacker:
             bank=bank.Flush()
             lump=struct.pack('{}s{}s'.format(len(lump),len(bank)),lump,bank)
             number_of_banks+=1
-        super_bank=struct.pack('4s4sII{}s'.format(len(lump)),
+        super_bank=struct.pack('4sIII{}s'.format(len(lump)),
                                         b"PYA1",
-                                        b"PADD",
+                                        self.BankArrayID,
                                         len(lump),
                                         number_of_banks,
                                         lump)
+        self.BankArrayID=self.BankArrayID+1
         print("Size of lump in super bank:"+str(len(lump))+"("+str(number_of_banks)+" banks)")
         return super_bank
 
@@ -287,6 +290,7 @@ class DataPacker:
     #Parse the json string MIDAS sends as a reply to data
     def __HandleReply(self, reply):
         #Unfold the json string into a list
+        #ReplyList=json.loads(reply.decode("utf-8","ignore"), strict=False)
         ReplyList=json.loads(reply)
         tmp=self.__ParseReplyItem(ReplyList,'RunNumber:')
         if tmp:
@@ -294,54 +298,64 @@ class DataPacker:
         tmp=self.__ParseReplyItem(ReplyList,'EventSize:')
         if tmp:
             self.MaxEventSize=int(tmp)
-        tmp=self.__ParseReplyItem(ReplyList,'STATUS:')
+        tmp=self.__ParseReplyItem(ReplyList,'RunStatus:')
         if tmp:
             self.RunStatus=tmp
+        tmp=self.__ParseReplyItem(ReplyList,'SendToAddress:')
+        if tmp:
+            self.address=tmp
+        tmp=self.__ParseReplyItem(ReplyList,'SendToPort:')
+        if tmp:
+            self.port=int(tmp)
+        tmp=self.__ParseReplyItem(ReplyList,'FrontendStatus:')
+        if tmp:
+            self.FrontendStatus=tmp
+        tmp=self.__ParseReplyItem(ReplyList,'MIDASTime:')
+        if tmp:
+            self.MIDASTime=float(tmp)
         self.__PrintReplyItems(ReplyList,'msg:')
         self.__PrintReplyItems(ReplyList,'err:')
 
-    #Send formatted data to MIDAS
-    def __SendWithTimeout(self,data,try_limit):
-        send_attempt=0
-        while send_attempt<try_limit:
-            try:
-                self.socket.send(data, zmq.NOBLOCK)
-                break
-            except zmq.error.Again:
-                #print("Retrying"+srt(send_attempt))
-                send_attempt+=1
-                time.sleep(0.01)
-            except Exception:
-                print("New unknown exception!!!")
-                exit(1)
-        if send_attempt>=try_limit:
-            print("Failed to send after "+str(send_attempt)+" attempts")
-        #    self.__stop()
-        #    self.__connect()
-        print("Sent on attempt"+str(send_attempt))
+    def __send_block(self,message,response_size,timeout_limit=10.0):
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.settimeout(timeout_limit)
+        self.socket.connect((self.experiment,self.port))
+        self.socket.sendall(message)
+        response=b""
+        #Read until end of json message
+        while not response.endswith(b"\"]"):
+           response+=self.socket.recv(response_size)
+           #print(response)
+        self.socket.shutdown(socket.SHUT_WR)
+        self.socket.close()
+        return response
 
-    #Recieve data from MIDAS. Always returns a string
-    def __RecieveWithTimeout(self,try_limit):
-        receive_attempt=0
-        message=str()
-        while receive_attempt<try_limit:
-            try:
-                message = self.socket.recv(zmq.NOBLOCK)
-                break
-            except zmq.error.Again:
-                receive_attempt+=1
-                time.sleep(0.01)
-            except Exception:
-                print("New unknown exception!!!")
-                exit(1)
-        if receive_attempt>=try_limit:
-            self.__stop()
-            self.__connect()
-            self.AnnounceOnSpeaker("ZMQTimeout","Connection drop detected...")
-            message="[\"Timeout after "+str(receive_attempt) + " tries\"]"
-        print("Received reply on attempt "+str(receive_attempt))
-        print(message)
-        return message
+    #Send formatted data to MIDAS
+    def __SendWithTimeout(self,data,timeout_limit=10.0):
+        reply=""
+        try:
+            reply=self.__send_block(data,1024,timeout_limit)
+        except socket.timeout:
+            self.AnnounceOnSpeaker("TCPTimeout","Connection drop detected...")
+            print("Failed to send after "+str(timeout_limit)+" seconds")
+        except ConnectionResetError:
+            print("Connection got reset... try again...")
+            self.__SendWithTimeout(data,timeout_limit)
+        except ConnectionRefusedError:
+            print("Connection got refused... try again...")
+            self.__SendWithTimeout(data,timeout_limit)
+        except Exception:
+            print("New unknown exception!!!",sys.exc_info()[0])
+            exit(1)
+
+        if len(reply):
+            self.__HandleReply(reply)
+            if reply[0:5]==b"ERROR":
+                print("ERROR reported from MIDAS! FATAL!")
+                os._exit(1)
+        #print("Sent on attempt"+str(send_attempt))
+        print("Data sent and received reply:"+str(reply))
+        return
 
     def CheckDataLength(self,length):
         if (length>self.MaxEventSize):
@@ -350,7 +364,8 @@ class DataPacker:
             os._exit(1)
 
     #Main (forever) loop for flushing the queues... run as its own thread
-    def __Run(self,sleep_time=1):
+    def __Run(self,periodic_flush_time=1):
+        sleep_time=periodic_flush_time
         #Announce I am connection on MIDAS speaker
         connectMsg="New python connection from "+str(socket.gethostname()) + " PROGRAM:"+str(sys.argv)
         print(connectMsg)
@@ -360,7 +375,7 @@ class DataPacker:
         while True:
             # Execute periodic tasks (RunNumber tracking etc)
             for task in self.PeriodicTasks:
-                self.AddData(b"PERIODIC",bytes(task,'utf-8'),b"\0",GetLVTimeNow(),str("\0"))
+                self.AddData(b"PERIODIC",bytes(task,'utf-8'),b"\0",0,GetLVTimeNow(),str("\0"))
             # Flatten data in memory and send to MIDAS (if there is any data)
             n=self.__BanksToFlush()
             if n > 0:
@@ -369,16 +384,7 @@ class DataPacker:
                 print("Sending " +str(n) +" banks of data ("+str(len(Bundle)) +" bytes)...")
                 #self.socket.send(Bundle)
                 #print("Sent...")
-                self.__SendWithTimeout(Bundle,1000)
-                #  Get the reply.
-                #message = self.socket.recv()
-                #print("Received reply [ %s ]" % message)
-                message = self.__RecieveWithTimeout(1000)
-                if len(message):
-                    self.__HandleReply(message)
-                if message[0:5]==b"ERROR":
-                    print("ERROR reported from MIDAS! FATAL!")
-                    os._exit(1)
+                self.__SendWithTimeout(Bundle,10.0)
             else:
                 print("Nothing to flush")
             if self.KillThreads:
@@ -395,7 +401,7 @@ class DataBank:
     r = threading.RLock()
 
     #Arguments must be bytes... assert statements enforce this
-    def __init__(self, datatype, category, varname,eqtype):
+    def __init__(self, datatype, category, varname,eqtype,rate):
         self.BANK=b"PYB1"
         assert(isinstance(datatype,bytes))
         self.DATATYPE=datatype
@@ -405,6 +411,7 @@ class DataBank:
         self.VARNAME=varname
         assert(isinstance(eqtype,bytes))
         self.EQTYPE=eqtype
+        self.HistoryRate=rate
         self.DataList=[]
 
     def IsBankMatch(self,category,varname):
@@ -428,10 +435,10 @@ class DataBank:
         #Pack timestamp and data array into LVDATA format
         lvdata=struct.pack(self.LVDATA.format(len(data)) ,timestamp,data)
         #Check the length of the last array matches the first
+        self.r.acquire()
         if len(self.DataList) > 0:
             assert len(self.DataList[0]) == len(lvdata)
         #Add this LVDATA to a list for later flattening (thread safe)
-        self.r.acquire()
         self.DataList.append(lvdata)
         self.r.release()
 
@@ -456,24 +463,26 @@ class DataBank:
             return
         #print("Banks to flush:" + str(self.NumberToFlush() ) + " Data length:" + str(self.DataLengthOfAllBank()))
         lump=b''
-        #Unfold data in DataList list
-        for data in self.DataList:
-           lump=struct.pack('{}s{}s'.format(len(lump),len(data)),lump,data)
-        #Dimensions of LVDATA in BANK
-        block_size=len(self.DataList[0])
-        num_blocks=len(self.DataList)
-        #self.print()
-        #All items in DataList used, clear the memory
-        self.DataList.clear()
+        LocalList=self.DataList
         self.DataList=[]
         self.r.release()
+        #Unfold data in DataList list
+        for data in LocalList:
+           lump=struct.pack('{}s{}s'.format(len(lump),len(data)),lump,data)
+        #Dimensions of LVDATA in BANK
+        block_size=len(LocalList[0])
+        num_blocks=len(LocalList)
+        #self.print()
+        #All items in DataList used, clear the memory
+        LocalList.clear()
+        
         #Build entire bank with header
         BANK=struct.pack(self.LVBANK.format(len(lump)),
                                         self.BANK,self.DATATYPE,
                                         self.VARCATEGORY,
                                         self.VARNAME,
                                         self.EQTYPE,
-                                        1,2,
+                                        self.HistoryRate,2,
                                         block_size,num_blocks,
                                         lump)
         return BANK
