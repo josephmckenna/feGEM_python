@@ -99,11 +99,12 @@ class DataPacker:
     RunNumber=-99
     RunStatus=str()
     PeriodicTasks=list()
+    BufferOverflowCount=0
 
     """Public member functions:"""
 
     def AnnounceOnSpeaker(self,category,message):
-        self.AddData(category,b"TALK",b"\0",0,0,GetLVTimeNow(),message)
+        self.AddData(category,b"TALK",b"\0",0,0,GetLVTimeNow(),message,True)
 
     def GetRunNumber(self):
         #Launch the periodic task to track the RunNumber
@@ -120,7 +121,7 @@ class DataPacker:
             time.sleep(0.1)
         return self.RunStatus
 
-    def AddData(self, category, varname, description, history_settings,history_rate, timestamp, data):
+    def AddData(self, category, varname, description, history_settings,history_rate, timestamp, data, insert_front=False):
         #Clean up input strings... (convert str to bytes and trim length)
         category=CleanString(category,16)
         varname=CleanString(varname,16)
@@ -158,17 +159,20 @@ class DataPacker:
         else:
             print("Unsupported data format ("+str(type(data))+")... upgrade DataPacker!")
             exit(1)
-
-        #Find existing bank to add data to
-        for bank in self.DataBanks:
-            if bank.IsBankMatch(category,varname):
-                #Bank already in memory! Add data to it!
-                bank.AddData(timestamp,data)
-                return
+        if varname!=b"TALK":
+           #Find existing bank to add data to
+           for bank in self.DataBanks:
+               if bank.IsBankMatch(category,varname):
+                   #Bank already in memory! Add data to it!
+                   bank.AddData(timestamp,data)
+                   return
         #Matching bank not found in list... add this new bank to DataBanks list
-        self.DataBanks.append(DataBank(TYPE,category,varname,description,history_settings,history_rate))
-        self.AddData(category, varname, description, history_settings,history_rate, timestamp, data)
-
+        bank=DataBank(TYPE,category,varname,description,history_settings,history_rate)
+        bank.AddData(timestamp, data)
+        if insert_front:
+           self.DataBanks.insert(0,bank)
+        else:
+           self.DataBanks.append(bank)
 
     """Private member functions"""
     
@@ -252,6 +256,14 @@ class DataPacker:
 
     #Flatten all data in memory (to send to MIDAS)
     def __Flush(self):
+        # Decrement the buffer overflow counter once per second until =0
+        if self.BufferOverflowCount>0:
+           self.BufferOverflowCount=self.BufferOverflowCount-1
+        #Track remaining buffer space
+        buffer_remaining=10000 #Some default value
+        if (self.MaxEventSize>0):
+            buffer_remaining=self.MaxEventSize
+
         #If data packer has no banks... do nothing
         if len(self.DataBanks)==0:
             return
@@ -262,18 +274,24 @@ class DataPacker:
         if self.__BanksToFlush()==1:
             for bank in self.DataBanks:
                 if bank.NumberToFlush() > 0:
-                    return bank.Flush()
+                    return bank.Flush(self,buffer_remaining)
         #If data packer has many banks to flush, put them in a superbank
+        #Track remaining buffer space, less the size of a bank array header
+        buffer_remaining=buffer_remaining-16
         print("Building super bank")
         lump=b''
         number_of_banks=0
+        
+        #Loop over all banks and flush each one
         for bank in self.DataBanks:
             n_to_flush=bank.NumberToFlush()
             if n_to_flush == 0:
                 continue
-            bank=bank.Flush()
-            lump=struct.pack('{}s{}s'.format(len(lump),len(bank)),lump,bank)
-            number_of_banks+=1
+            bank=bank.Flush(self,buffer_remaining)
+            if len(bank):
+               buffer_remaining=buffer_remaining-len(bank)
+               lump=struct.pack('{}s{}s'.format(len(lump),len(bank)),lump,bank)
+               number_of_banks+=1
         super_bank=struct.pack('4sIII{}s'.format(len(lump)),
                                         b"GEA1",
                                         self.BankArrayID,
@@ -483,7 +501,7 @@ class DataBank:
         return n
 
     #Flatten all data in DataList
-    def Flush(self):
+    def Flush(self,caller,buffer_remaining):
         self.r.acquire()
         #Check if there is anything to do
         if len(self.DataList) == 0:
@@ -495,12 +513,33 @@ class DataBank:
         LocalList=self.DataList
         self.DataList=[]
         self.r.release()
-        #Unfold data in DataList list
-        for data in LocalList:
-           lump=struct.pack('{}s{}s'.format(len(lump),len(data)),lump,data)
-        #Dimensions of LVDATA in BANK
+        #Remove space needed for header
+        buffer_remaining-=88
+        
         block_size=len(LocalList[0])
-        num_blocks=len(LocalList)
+        num_blocks=0
+        #Unfold data in DataList list, stop if we run out of buffer
+        while (buffer_remaining>block_size and len(LocalList)):
+           lump=struct.pack('{}s{}s'.format(len(lump),block_size),lump,LocalList.pop(0))
+           buffer_remaining-=block_size
+           if len(lump):
+              num_blocks+=1
+        #If we didn't unfold everything, then put it back in the DataList
+        if len(LocalList) > 0:
+           print("Overflow prevented ("+str(caller.BufferOverflowCount)+")")
+           #caller.AnnounceOnSpeaker("THISHOST","Event Buffer Overflow prevented")
+           caller.BufferOverflowCount+=1
+           if caller.BufferOverflowCount>100:
+              caller.AnnounceOnSpeaker("THISHOST","DataPacker limited by data rate for more than a minute")
+              caller.BufferOverflowCount=0
+           self.r.acquire()
+           while len(LocalList) > 0:
+              self.DataList.append(LocalList.pop(0))
+           self.r.release()
+
+        #Dimensions of LVDATA in BANK
+        if num_blocks==0:
+            return b''
         #self.print()
         #All items in DataList used, clear the memory
         LocalList.clear()
