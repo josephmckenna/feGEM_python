@@ -274,7 +274,7 @@ class DataPacker:
             lump=struct.pack('{}s{}s'.format(len(lump),len(bank)),lump,bank)
             number_of_banks+=1
         super_bank=struct.pack('4sIII{}s'.format(len(lump)),
-                                        b"PYA1",
+                                        b"GEA1",
                                         self.BankArrayID,
                                         len(lump),
                                         number_of_banks,
@@ -412,7 +412,7 @@ class DataBank:
 
     #Arguments must be bytes... assert statements enforce this
     def __init__(self, datatype, category, varname,eqtype,rate):
-        self.BANK=b"PYB1"
+        self.BANK=b"GEB1"
         assert(isinstance(datatype,bytes))
         self.DATATYPE=datatype
         assert(isinstance(category,bytes))
