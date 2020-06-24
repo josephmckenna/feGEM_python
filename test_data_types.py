@@ -1,4 +1,4 @@
-from python_packer import *
+from MIDAS_GEM import *
 
 #Global data packer
 packer=DataPacker("alphamidastest8")

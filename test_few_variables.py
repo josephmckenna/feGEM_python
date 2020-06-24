@@ -1,5 +1,5 @@
 #!python3
-from python_packer import *
+from MIDAS_GEM import *
 
 #Global data packer
 packer=DataPacker("alphamidastest8",max_event_size=100000)
