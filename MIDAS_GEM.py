@@ -103,7 +103,7 @@ class DataPacker:
     """Public member functions:"""
 
     def AnnounceOnSpeaker(self,category,message):
-        self.AddData(category,b"TALK",b"\0",0,GetLVTimeNow(),message)
+        self.AddData(category,b"TALK",b"\0",0,0,GetLVTimeNow(),message)
 
     def GetRunNumber(self):
         #Launch the periodic task to track the RunNumber
@@ -120,7 +120,7 @@ class DataPacker:
             time.sleep(0.1)
         return self.RunStatus
 
-    def AddData(self, category, varname, description, history_rate, timestamp, data):
+    def AddData(self, category, varname, description, history_settings,history_rate, timestamp, data):
         #Clean up input strings... (convert str to bytes and trim length)
         category=CleanString(category,16)
         varname=CleanString(varname,16)
@@ -166,15 +166,15 @@ class DataPacker:
                 bank.AddData(timestamp,data)
                 return
         #Matching bank not found in list... add this new bank to DataBanks list
-        self.DataBanks.append(DataBank(TYPE,category,varname,description,history_rate))
-        self.AddData(category, varname, description, history_rate, timestamp, data)
+        self.DataBanks.append(DataBank(TYPE,category,varname,description,history_settings,history_rate))
+        self.AddData(category, varname, description, history_settings,history_rate, timestamp, data)
 
 
     """Private member functions"""
     
-    def __init__(self, experiment,max_event_size=0):
+    def __init__(self, experiment,port=5555,max_event_size=0):
         self.experiment=experiment
-        self.port=5555
+        self.port=port
         self.DataBanks=[]
         self.BankArrayID=0
         self.MaxEventSize=max_event_size
@@ -190,20 +190,20 @@ class DataPacker:
         self.FrontendStatus=""
         self.address=self.experiment
         while len(self.FrontendStatus)==0:
-            self.AddData("THISHOST","START_FRONTEND", "",0,GetLVTimeNow(),socket.gethostname())
+            self.AddData("THISHOST","START_FRONTEND", "",0,0,GetLVTimeNow(),socket.gethostname())
             # Self registration on allowed host list is usually disabled in frontend, so this might do nothing
-            self.AddData("THISHOST","ALLOW_HOST", "",0,GetLVTimeNow(),socket.gethostname())
-            self.AddData("THISHOST","GIVE_ME_ADDRESS","",0,GetLVTimeNow(),socket.gethostname())
-            self.AddData("THISHOST","GIVE_ME_PORT",   "",0,GetLVTimeNow(),socket.gethostname())
+            self.AddData("THISHOST","ALLOW_HOST", "",0,0,GetLVTimeNow(),socket.gethostname())
+            self.AddData("THISHOST","GIVE_ME_ADDRESS","",0,0,GetLVTimeNow(),socket.gethostname())
+            self.AddData("THISHOST","GIVE_ME_PORT",   "",0,0,GetLVTimeNow(),socket.gethostname())
             self.__SendWithTimeout(self.__Flush(),1000);
 
         # Connect to LabVIEW frontend 'worker' (where we send data)
         # Request the max data pack size
         if self.MaxEventSize:
-           self.AddData("CMD","SET_EVENT_SIZE","",0,GetLVTimeNow(),str(self.MaxEventSize))
+           self.AddData("CMD","SET_EVENT_SIZE","",0,0,GetLVTimeNow(),str(self.MaxEventSize))
         self.MaxEventSize=-1
         while self.MaxEventSize<0:
-            self.AddData("THISHOST","GET_EVENT_SIZE","",0,GetLVTimeNow(),str("\0"))
+            self.AddData("THISHOST","GET_EVENT_SIZE","",0,0,GetLVTimeNow(),str("\0"))
             self.__SendWithTimeout(self.__Flush());
         print("MaxEventSize:"+str(self.MaxEventSize))
         # Start background thread to flush data
@@ -233,7 +233,7 @@ class DataPacker:
             CPU=psutil.cpu_percent(60)
             MEM=psutil.virtual_memory().percent
             print("Logging CPUMEM"+str(CPU)+"  "+str(MEM))
-            self.AddData("THISHOST","CPUMEM","",10,GetLVTimeNow(),[CPU,MEM])
+            self.AddData("THISHOST","CPUMEM","",0,10,GetLVTimeNow(),[CPU,MEM])
             if self.KillThreads:
                 break
 
@@ -356,6 +356,9 @@ class DataPacker:
             print("Connection got refused... try again...")
             time.sleep(1.)
             self.__SendWithTimeout(data,timeout_limit)
+        except OSError:
+            print("OSError... check firewall settings of MIDAS server")
+            exit(1)
         except Exception:
             print("New unknown exception!!!",sys.exc_info()[0])
             exit(1)
@@ -388,7 +391,7 @@ class DataPacker:
             packing_start=time.time();
             # Execute periodic tasks (RunNumber tracking etc)
             for task in self.PeriodicTasks:
-                self.AddData(b"PERIODIC",bytes(task,'utf-8'),b"\0",0,GetLVTimeNow(),str("\0"))
+                self.AddData(b"PERIODIC",bytes(task,'utf-8'),b"\0",0,0,GetLVTimeNow(),str("\0"))
             # Flatten data in memory and send to MIDAS (if there is any data)
             n=self.__BanksToFlush()
             if n > 0:
@@ -417,13 +420,13 @@ class DataBank:
     #LVBANK and LVDATA description: https://alphacpc05.cern.ch/elog/ALPHA/25025
     LVBANKHEADERSIZE=88
     #LVBANK Header format
-    LVBANK='4s4s16s16s32sihhii{}s'
+    LVBANK='4s4s16s16s32shhhhii{}s'
     #LVDATA Header format
     LVDATA='16s{}s'
     r = threading.RLock()
 
     #Arguments must be bytes... assert statements enforce this
-    def __init__(self, datatype, category, varname,eqtype,rate):
+    def __init__(self, datatype, category, varname,eqtype,rate_settings,rate):
         self.BANK=b"GEB1"
         assert(isinstance(datatype,bytes))
         self.DATATYPE=datatype
@@ -433,6 +436,7 @@ class DataBank:
         self.VARNAME=varname
         assert(isinstance(eqtype,bytes))
         self.EQTYPE=eqtype
+        self.HistorySettings=rate_settings
         self.HistoryRate=rate
         self.DataList=[]
 
@@ -507,6 +511,7 @@ class DataBank:
                                         self.VARCATEGORY,
                                         self.VARNAME,
                                         self.EQTYPE,
+                                        self.HistorySettings,
                                         self.HistoryRate,
                                         DataByteOrder, # Timestamp byte order
                                         DataByteOrder, # Data byte order
