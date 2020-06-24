@@ -191,6 +191,7 @@ class DataPacker:
         self.address=self.experiment
         while len(self.FrontendStatus)==0:
             self.AddData("THISHOST","START_FRONTEND", "",0,GetLVTimeNow(),socket.gethostname())
+            # Self registration on allowed host list is usually disabled in frontend, so this might do nothing
             self.AddData("THISHOST","ALLOW_HOST", "",0,GetLVTimeNow(),socket.gethostname())
             self.AddData("THISHOST","GIVE_ME_ADDRESS","",0,GetLVTimeNow(),socket.gethostname())
             self.AddData("THISHOST","GIVE_ME_PORT",   "",0,GetLVTimeNow(),socket.gethostname())
@@ -353,6 +354,7 @@ class DataPacker:
             self.__SendWithTimeout(data,timeout_limit)
         except ConnectionRefusedError:
             print("Connection got refused... try again...")
+            time.sleep(1.)
             self.__SendWithTimeout(data,timeout_limit)
         except Exception:
             print("New unknown exception!!!",sys.exc_info()[0])
@@ -383,6 +385,7 @@ class DataPacker:
         
         # Run forever!
         while True:
+            packing_start=time.time();
             # Execute periodic tasks (RunNumber tracking etc)
             for task in self.PeriodicTasks:
                 self.AddData(b"PERIODIC",bytes(task,'utf-8'),b"\0",0,GetLVTimeNow(),str("\0"))
@@ -390,11 +393,20 @@ class DataPacker:
             n=self.__BanksToFlush()
             if n > 0:
                 Bundle=self.__Flush()
+                packing_stop=time.time();
                 self.CheckDataLength(len(Bundle))
+                self.percent_time_packing=100.*(packing_stop-packing_start)/sleep_time
+                print("Packing time percentage:"+str(self.percent_time_packing)+"%")
+                #if (self.percent_time_packing>100.):
+                #   self.AnnounceOnSpeaker("THISHOST","Warning: Packing time exceeds 100%")
+                #print("sleeping:"+str(sleep_time-(packing_stop-packing_start)))
+                time.sleep(sleep_time-(packing_stop-packing_start))
                 print("Sending " +str(n) +" banks of data ("+str(len(Bundle)) +" bytes)...")
                 #self.socket.send(Bundle)
                 #print("Sent...")
+                
                 self.__SendWithTimeout(Bundle,10.0)
+                continue
             else:
                 print("Nothing to flush")
             if self.KillThreads:
