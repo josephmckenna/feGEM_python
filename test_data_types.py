@@ -13,17 +13,17 @@ class SimulateData:
     def GenerateArray(self, wait_time=1):
         #data=struct.pack('10d',0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0)
         #print("Adding data")
-        packer.AddData(self.category,self.varname,self.description,GetLVTimeNow(),array.array('d',[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]))
+        packer.AddData(self.category,self.varname,self.description,0,1,GetLVTimeNow(),array.array('d',[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]))
         time.sleep(wait_time)
     def GenerateNpArray(self, wait_time=1):
         if HaveNumpy:
-            packer.AddData(self.category,self.varname,self.description,GetLVTimeNow(),np.array([0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0],dtype = 'float64'))
+            packer.AddData(self.category,self.varname,self.description,,0,1,GetLVTimeNow(),np.array([0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0],dtype = 'float64'))
         else:
             print("Please install numpy")
             exit(1)
         time.sleep(wait_time)
     def GenerateList(self,wait_time=1):
-        packer.AddData(self.category,self.varname,self.description,GetLVTimeNow(),[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0])
+        packer.AddData(self.category,self.varname,self.description,,0,1,GetLVTimeNow(),[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0])
         time.sleep(wait_time)
 
 print("Current Run Number: "+str(packer.GetRunNumber()))
