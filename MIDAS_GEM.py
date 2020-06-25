@@ -176,12 +176,12 @@ class DataPacker:
 
     """Private member functions"""
     
-    def __init__(self, experiment,port=5555,max_event_size=0):
-        self.experiment=experiment
+    def __init__(self, midas_server,port=5555,max_data_rate=0):
+        self.experiment=midas_server
         self.port=port
         self.DataBanks=[]
         self.BankArrayID=0
-        self.MaxEventSize=max_event_size
+        self.MaxEventSize=max_data_rate
         #  Connect to LabVIEW frontend 'supervisor'
         self.__connect()
 
@@ -194,11 +194,12 @@ class DataPacker:
         self.FrontendStatus=""
         self.address=self.experiment
         while len(self.FrontendStatus)==0:
-            self.AddData("THISHOST","START_FRONTEND", "",0,0,GetLVTimeNow(),socket.gethostname())
+            self.MyHostName=socket.gethostname()
+            self.AddData("THISHOST","START_FRONTEND", "",0,0,GetLVTimeNow(),self.MyHostName)
             # Self registration on allowed host list is usually disabled in frontend, so this might do nothing
-            self.AddData("THISHOST","ALLOW_HOST", "",0,0,GetLVTimeNow(),socket.gethostname())
-            self.AddData("THISHOST","GIVE_ME_ADDRESS","",0,0,GetLVTimeNow(),socket.gethostname())
-            self.AddData("THISHOST","GIVE_ME_PORT",   "",0,0,GetLVTimeNow(),socket.gethostname())
+            self.AddData("THISHOST","ALLOW_HOST", "",0,0,GetLVTimeNow(),self.MyHostName)
+            self.AddData("THISHOST","GIVE_ME_ADDRESS","",0,0,GetLVTimeNow(),self.MyHostName)
+            self.AddData("THISHOST","GIVE_ME_PORT",   "",0,0,GetLVTimeNow(),self.MyHostName)
             self.__SendWithTimeout(self.__Flush(),1000);
 
         # Connect to LabVIEW frontend 'worker' (where we send data)
@@ -234,10 +235,10 @@ class DataPacker:
     #Log CPU load and memory usage once per minute
     def __LogLoad(self):
         while True:
-            CPU=psutil.cpu_percent(60)
-            MEM=psutil.virtual_memory().percent
-            print("Logging CPUMEM"+str(CPU)+"  "+str(MEM))
-            self.AddData("THISHOST","CPUMEM","",0,10,GetLVTimeNow(),[CPU,MEM])
+            CPUMEM=psutil.cpu_percent(interval=60, percpu=True)
+            CPUMEM.append(psutil.virtual_memory().percent)
+            print("Logging CPUMEM "+str(CPU)+"  "+str(MEM))
+            self.AddData("THISHOST","CPUMEM","",0,10,GetLVTimeNow(),CPUMEM)
             if self.KillThreads:
                 break
 
@@ -400,7 +401,7 @@ class DataPacker:
     def __Run(self,periodic_flush_time=1):
         sleep_time=periodic_flush_time
         #Announce I am connection on MIDAS speaker
-        connectMsg="New python connection from "+str(socket.gethostname()) + " PROGRAM:"+str(sys.argv)
+        connectMsg="New python connection from " + self.MyHostName + " PROGRAM:"+str(sys.argv)
         print(connectMsg)
         self.AnnounceOnSpeaker("THISHOST",connectMsg)
         
@@ -421,7 +422,9 @@ class DataPacker:
                 #if (self.percent_time_packing>100.):
                 #   self.AnnounceOnSpeaker("THISHOST","Warning: Packing time exceeds 100%")
                 #print("sleeping:"+str(sleep_time-(packing_stop-packing_start)))
-                time.sleep(sleep_time-(packing_stop-packing_start))
+                wait_time=sleep_time-(packing_stop-packing_start)
+                if wait_time>0:
+                   time.sleep(wait_time)
                 print("Sending " +str(n) +" banks of data ("+str(len(Bundle)) +" bytes)...")
                 #self.socket.send(Bundle)
                 #print("Sent...")
@@ -530,7 +533,7 @@ class DataBank:
            #caller.AnnounceOnSpeaker("THISHOST","Event Buffer Overflow prevented")
            caller.BufferOverflowCount+=1
            if caller.BufferOverflowCount>100:
-              caller.AnnounceOnSpeaker("THISHOST","DataPacker limited by data rate for more than a minute")
+              caller.AnnounceOnSpeaker("THISHOST","DataPacker on "+caller.MyHostName+" limited by data rate for more than a minute")
               caller.BufferOverflowCount=0
            self.r.acquire()
            while len(LocalList) > 0:
