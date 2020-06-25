@@ -237,7 +237,7 @@ class DataPacker:
         while True:
             CPUMEM=psutil.cpu_percent(interval=60, percpu=True)
             CPUMEM.append(psutil.virtual_memory().percent)
-            print("Logging CPUMEM "+str(CPU)+"  "+str(MEM))
+            print("Logging CPUMEM "+str(CPUMEM))
             self.AddData("THISHOST","CPUMEM","",0,10,GetLVTimeNow(),CPUMEM)
             if self.KillThreads:
                 break
