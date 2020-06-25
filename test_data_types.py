@@ -1,7 +1,7 @@
 from MIDAS_GEM import *
 
 #Global data packer
-packer=DataPacker("alphamidastest8")
+packer=DataPacker(midas_server="alphamidastest8",port=5555)
 
 
 

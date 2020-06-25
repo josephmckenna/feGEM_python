@@ -2,8 +2,7 @@
 from MIDAS_GEM import *
 
 #Global data packer
-packer=DataPacker("alphamidastest8",max_event_size=100000)
-
+packer=DataPacker(midas_server="alphamidastest8",port=5555,max_data_rate=100000)
 
 
 class SimulateData:
