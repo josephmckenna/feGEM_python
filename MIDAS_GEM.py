@@ -121,7 +121,12 @@ class DataPacker:
             time.sleep(0.1)
         return self.RunStatus
 
+    #The public version of AddData can ONLY queue to self.DataBanks
     def AddData(self, category, varname, description, history_settings,history_rate, timestamp, data, insert_front=False):
+        self.__AddData(category, varname, description, history_settings,history_rate, timestamp, data, self.DataBanks, insert_front)
+
+    #The private version of AddData can use custom queues (ie for __connect())
+    def __AddData(self, category, varname, description, history_settings,history_rate, timestamp, data, databanks, insert_front=False):
         #Clean up input strings... (convert str to bytes and trim length)
         category=CleanString(category,16)
         varname=CleanString(varname,16)
@@ -161,7 +166,7 @@ class DataPacker:
             exit(1)
         if varname!=b"TALK":
            #Find existing bank to add data to
-           for bank in self.DataBanks:
+           for bank in databanks:
                if bank.IsBankMatch(category,varname):
                    #Bank already in memory! Add data to it!
                    bank.AddData(timestamp,data)
@@ -170,49 +175,58 @@ class DataPacker:
         bank=DataBank(TYPE,category,varname,description,history_settings,history_rate)
         bank.AddData(timestamp, data)
         if insert_front:
-           self.DataBanks.insert(0,bank)
+           databanks.insert(0,bank)
         else:
-           self.DataBanks.append(bank)
+           databanks.append(bank)
 
     """Private member functions"""
     
     def __init__(self, midas_server,port=5555,max_data_rate=0):
         self.experiment=midas_server
+        self.initial_port=port
         self.port=port
         self.DataBanks=[]
         self.BankArrayID=0
         self.MaxEventSize=max_data_rate
         #  Connect to LabVIEW frontend 'supervisor'
         self.__connect()
+        self.__run_forever()
 
     def __connect(self):
+        self.PauseLogging=True
         print("Connecting to MIDAS server...")
         #self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         #self.socket.connect((self.experiment,5555))
         print("Connection made... Requesting to start logging")
+        ConnectBanks=[]
         #Negociate connection to worker frontend
         self.FrontendStatus=""
         self.address=self.experiment
+        self.port=self.initial_port
         while len(self.FrontendStatus)==0:
             self.MyHostName=socket.gethostname()
-            self.AddData("THISHOST","START_FRONTEND", "",0,0,GetLVTimeNow(),self.MyHostName)
+            self.__AddData("THISHOST","START_FRONTEND", "",0,0,GetLVTimeNow(),self.MyHostName,databanks=ConnectBanks)
             # Self registration on allowed host list is usually disabled in frontend, so this might do nothing
-            self.AddData("THISHOST","ALLOW_HOST", "",0,0,GetLVTimeNow(),self.MyHostName)
-            self.AddData("THISHOST","GIVE_ME_ADDRESS","",0,0,GetLVTimeNow(),self.MyHostName)
-            self.AddData("THISHOST","GIVE_ME_PORT",   "",0,0,GetLVTimeNow(),self.MyHostName)
-            self.__SendWithTimeout(self.__Flush(),1000);
+            self.__AddData("THISHOST","ALLOW_HOST", "",0,0,GetLVTimeNow(),self.MyHostName,databanks=ConnectBanks)
+            self.__AddData("THISHOST","GIVE_ME_ADDRESS","",0,0,GetLVTimeNow(),self.MyHostName,databanks=ConnectBanks)
+            self.__AddData("THISHOST","GIVE_ME_PORT",   "",0,0,GetLVTimeNow(),self.MyHostName,databanks=ConnectBanks)
+            self.__SendWithTimeout(self.__Flush(ConnectBanks),1000);
 
         # Connect to LabVIEW frontend 'worker' (where we send data)
         # Request the max data pack size
         if self.MaxEventSize:
-           self.AddData("CMD","SET_EVENT_SIZE","",0,0,GetLVTimeNow(),str(self.MaxEventSize))
+           self.__AddData("CMD","SET_EVENT_SIZE","",0,0,GetLVTimeNow(),str(self.MaxEventSize),databanks=ConnectBanks)
         self.MaxEventSize=-1
         while self.MaxEventSize<0:
-            self.AddData("THISHOST","GET_EVENT_SIZE","",0,0,GetLVTimeNow(),str("\0"))
-            self.__SendWithTimeout(self.__Flush());
+            self.__AddData("THISHOST","GET_EVENT_SIZE","",0,0,GetLVTimeNow(),str("\0"),databanks=ConnectBanks)
+            self.__SendWithTimeout(self.__Flush(ConnectBanks));
         print("MaxEventSize:"+str(self.MaxEventSize))
+        self.PauseLogging=False
+     
+    def __run_forever(self):
         # Start background thread to flush data
         self.KillThreads=False
+        self.PauseLogging=False
         self.t1 = threading.Thread(target=self.__Run)
         self.t1.start()
         # Start lightweight background thread to log CPU load
@@ -237,7 +251,7 @@ class DataPacker:
         while True:
             CPUMEM=psutil.cpu_percent(interval=60, percpu=True)
             CPUMEM.append(psutil.virtual_memory().percent)
-            print("Logging CPUMEM "+str(CPUMEM))
+            #print("Logging CPUMEM "+str(CPUMEM))
             self.AddData("THISHOST","CPUMEM","",0,10,GetLVTimeNow(),CPUMEM)
             if self.KillThreads:
                 break
@@ -248,15 +262,15 @@ class DataPacker:
             self.PeriodicTasks.append(task)
 
     #Check all banks for data that needs flushing
-    def __BanksToFlush(self):
+    def __BanksToFlush(self,databanks):
         n=0
-        for bank in self.DataBanks:
+        for bank in databanks:
             if bank.NumberToFlush()>0:
                 n+=1
         return n
 
     #Flatten all data in memory (to send to MIDAS)
-    def __Flush(self):
+    def __Flush(self,databanks):
         # Decrement the buffer overflow counter once per second until =0
         if self.BufferOverflowCount>0:
            self.BufferOverflowCount=self.BufferOverflowCount-1
@@ -266,14 +280,14 @@ class DataPacker:
             buffer_remaining=self.MaxEventSize
 
         #If data packer has no banks... do nothing
-        if len(self.DataBanks)==0:
+        if len(databanks)==0:
             return
         #If data packer has one bank, flush it
-        if len(self.DataBanks)==1:
-            return self.DataBanks[0].Flush()
+        if len(databanks)==1:
+            return databanks[0].Flush(self,buffer_remaining)
         #If data packer only has one bank type to flush... flush it
-        if self.__BanksToFlush()==1:
-            for bank in self.DataBanks:
+        if self.__BanksToFlush(databanks)==1:
+            for bank in databanks:
                 if bank.NumberToFlush() > 0:
                     return bank.Flush(self,buffer_remaining)
         #If data packer has many banks to flush, put them in a superbank
@@ -284,7 +298,7 @@ class DataPacker:
         number_of_banks=0
         
         #Loop over all banks and flush each one
-        for bank in self.DataBanks:
+        for bank in databanks:
             n_to_flush=bank.NumberToFlush()
             if n_to_flush == 0:
                 continue
@@ -369,11 +383,14 @@ class DataPacker:
             self.AnnounceOnSpeaker("TCPTimeout","Connection drop detected...")
             print("Failed to send after "+str(timeout_limit)+" seconds")
         except ConnectionResetError:
-            print("Connection got reset... try again...")
+            print("Connection got reset... trying to again...")
+            #self.__connect()
             self.__SendWithTimeout(data,timeout_limit)
         except ConnectionRefusedError:
-            print("Connection got refused... try again...")
+            print("Connection got refused... trying to connnect...")
             time.sleep(1.)
+            if self.port!=self.initial_port:
+               self.__connect()
             self.__SendWithTimeout(data,timeout_limit)
         except OSError:
             print("OSError... check firewall settings of MIDAS server")
@@ -407,14 +424,17 @@ class DataPacker:
         
         # Run forever!
         while True:
+            if self.PauseLogging:
+                time.sleep(0.1)
+                continue
             packing_start=time.time();
             # Execute periodic tasks (RunNumber tracking etc)
             for task in self.PeriodicTasks:
                 self.AddData(b"PERIODIC",bytes(task,'utf-8'),b"\0",0,0,GetLVTimeNow(),str("\0"))
             # Flatten data in memory and send to MIDAS (if there is any data)
-            n=self.__BanksToFlush()
+            n=self.__BanksToFlush(self.DataBanks)
             if n > 0:
-                Bundle=self.__Flush()
+                Bundle=self.__Flush(self.DataBanks)
                 packing_stop=time.time();
                 self.CheckDataLength(len(Bundle))
                 self.percent_time_packing=100.*(packing_stop-packing_start)/sleep_time
