@@ -11,6 +11,7 @@ import datetime
 import json
 import array  # Default behaviour is to use array as data type for logging...
 import os
+import gzip
 # External libraries:
 
 # Numpy is also supported
@@ -113,6 +114,13 @@ class DataPacker:
     RunStatus = str()
     PeriodicTasks = list()
     BufferOverflowCount = 0
+    TestMode = False
+    TestModeBuffer = ""
+    TestModeWriter = []
+
+    def TurnOfTestMode(self):
+        self.TestModeWriter = CompressedCSVWriter()
+        self.TestMode = True
 
     # Public member functions:
     def AnnounceOnSpeaker(self, category, message):
@@ -157,6 +165,8 @@ class DataPacker:
         description = CleanString(description, 32)
         # Default data type
         TYPE = b"NULL"
+        if self.TestMode:
+            self.__LogInTestMode(timestamp, category, varname, data)
         # Convert any lists to an array
         if isinstance(data, list):
             TYPE = GetListType(type(data[0]))
@@ -343,6 +353,22 @@ class DataPacker:
     def __AddPeriodicRequestTask(self, task):
         if task not in self.PeriodicTasks:
             self.PeriodicTasks.append(task)
+
+    # Tool to dump out all logged data to a local file
+    def __LogInTestMode(self, timestamp, category, varname, data):
+        [LVTime, Fraction] = struct.unpack('qQ', timestamp)
+        line = "%s, %s, %s, %s " % (LVTime,
+                                    Fraction,
+                                    category.decode("utf-8"),
+                                    varname.decode("utf-8"))
+        for i in data:
+            line += str(i) + str(",")
+        line += str("\n")
+        self.TestModeBuffer += line
+        # If the buffer has more than 10kb in it... write!
+        if len(self.TestModeBuffer) > 10000:
+            self.TestModeWriter.write(self.TestModeBuffer)
+            self.TestModeBuffer = ""
 
     # Check all banks for data that needs flushing
     def __BanksToFlush(self, databanks):
@@ -693,3 +719,30 @@ class DataBank:
                            num_blocks,
                            lump)
         return BANK
+
+
+class CompressedCSVWriter:
+
+    def __init__(self):
+        fname = "MIDAS_GEM_LOG_"
+        now = datetime.datetime.now()
+        fname += "%04.d%02.d%02d-%02d%02d%02d" % (now.year,
+                                                  now.month,
+                                                  now.day,
+                                                  now.hour,
+                                                  now.minute,
+                                                  now.second)
+        self.fileout = gzip.open(fname+'.csv.gz', 'wb')
+        title = bytes('LabVIEW Time (Seconds),' +
+                      'Fractions (2^64),' +
+                      'Category,' +
+                      'Varname,' +
+                      'Data...', 'utf-8')
+        print(title)
+        self.fileout.write(title)
+
+    def write(self, many_lines):
+        print("Writing 10kb out compressed CSV")
+        # print(many_lines)
+        self.fileout.write(bytearray(many_lines, 'utf-8'))
+        self.fileout.flush()
