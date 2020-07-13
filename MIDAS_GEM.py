@@ -118,7 +118,7 @@ class DataPacker:
     TestModeBuffer = ""
     TestModeWriter = []
 
-    def TurnOfTestMode(self):
+    def TurnOnTestMode(self):
         self.TestModeWriter = CompressedCSVWriter()
         self.TestMode = True
 
