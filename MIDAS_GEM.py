@@ -377,10 +377,10 @@ class DataPacker:
     # Tool to dump out all logged data to a local file
     def __LogInTestMode(self, timestamp, category, varname, data):
         [LVTime, Fraction] = struct.unpack('qQ', timestamp)
-        line = "%s, %s, %s, %s " % (LVTime,
-                                    Fraction,
-                                    category.decode("utf-8"),
-                                    varname.decode("utf-8"))
+        line = "%s, %s, %s, %s, " % (LVTime,
+                                     Fraction,
+                                     category.decode("utf-8"),
+                                     varname.decode("utf-8"))
         for i in data:
             line += str(i) + str(",")
         line += str("\n")
