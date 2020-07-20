@@ -524,7 +524,6 @@ class DataPacker:
             self.__SendWithTimeout(data, timeout_limit)
         except OSError:
             print("OSError... check firewall settings of MIDAS server")
-            exit(1)
         except Exception:
             print("New unknown exception!!!", sys.exc_info()[0])
             exit(1)
