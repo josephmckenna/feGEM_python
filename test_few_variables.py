@@ -4,6 +4,9 @@ from MIDAS_GEM import *
 #Global data packer
 packer=DataPacker(midas_server="alphamidastest8",port=5555,max_data_rate=100000)
 
+packer.TurnOnTestMode()
+#packer.TurnOnDebugMode()
+#packer.TurnOffDebugMode()
 
 class SimulateData:
     def __init__(self,category,varname,description):

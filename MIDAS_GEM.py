@@ -121,6 +121,26 @@ class DataPacker:
     def TurnOnTestMode(self):
         self.TestModeWriter = CompressedCSVWriter()
         self.TestMode = True
+    
+    def TurnOnDebugMode(self):
+        self.AddData(b"THISHOST",
+                     b"COMMAND",
+                     b"ENABLE_DEBUG_MODE",
+                     0,
+                     0,
+                     GetLVTimeNow(),
+                     ""
+                     )
+
+    def TurnOffDebugMode(self):
+        self.AddData(b"THISHOST",
+                     b"COMMAND",
+                     b"DISABLE_DEBUG_MODE",
+                     0,
+                     0,
+                     GetLVTimeNow(),
+                     ""
+                     )
 
     # Public member functions:
     def AnnounceOnSpeaker(self, category, message):
@@ -202,7 +222,7 @@ class DataPacker:
                   str(type(data)) +
                   ")... upgrade DataPacker!")
             exit(1)
-        if varname != b"TALK":
+        if varname != b"TALK" and varname != b"COMMAND":
             # Find existing bank to add data to
             for bank in databanks:
                 if bank.IsBankMatch(category, varname):
@@ -249,8 +269,8 @@ class DataPacker:
         while len(self.FrontendStatus) == 0:
             self.MyHostName = socket.gethostname()
             self.__AddData("THISHOST",
+                           "COMMAND",
                            "START_FRONTEND",
-                           "",
                            0,
                            0,
                            GetLVTimeNow(),
@@ -259,24 +279,24 @@ class DataPacker:
             # Self registration on allowed host list is usually
             # disabled in frontend, so this might do nothing
             self.__AddData("THISHOST",
+                           "COMMAND",
                            "ALLOW_HOST",
-                           "",
                            0,
                            0,
                            GetLVTimeNow(),
                            self.MyHostName,
                            databanks=ConnectBanks)
             self.__AddData("THISHOST",
+                           "COMMAND",
                            "GIVE_ME_ADDRESS",
-                           "",
                            0,
                            0,
                            GetLVTimeNow(),
                            self.MyHostName,
                            databanks=ConnectBanks)
             self.__AddData("THISHOST",
+                           "COMMAND",
                            "GIVE_ME_PORT",
-                           "",
                            0,
                            0,
                            GetLVTimeNow(),
@@ -287,9 +307,9 @@ class DataPacker:
         # Connect to LabVIEW frontend 'worker' (where we send data)
         # Request the max data pack size
         if self.MaxEventSize:
-            self.__AddData("CMD",
+            self.__AddData("THISHOST",
+                           "COMMAND",
                            "SET_EVENT_SIZE",
-                           "",
                            0,
                            0,
                            GetLVTimeNow(),
@@ -298,8 +318,8 @@ class DataPacker:
         self.MaxEventSize = -1
         while self.MaxEventSize < 0:
             self.__AddData("THISHOST",
+                           "COMMAND",
                            "GET_EVENT_SIZE",
-                           "",
                            0,
                            0,
                            GetLVTimeNow(),
@@ -544,9 +564,9 @@ class DataPacker:
             packing_start = time.time()
             # Execute periodic tasks (RunNumber tracking etc)
             for task in self.PeriodicTasks:
-                self.AddData(b"PERIODIC",
+                self.AddData(b"THISHOST",
+                             "COMMAND",
                              bytes(task, 'utf-8'),
-                             b"\0",
                              0,
                              0,
                              GetLVTimeNow(),
