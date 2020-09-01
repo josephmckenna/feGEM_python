@@ -448,47 +448,29 @@ class DataPacker:
               "(" + str(number_of_banks) + " banks)")
         return super_bank
 
-    # Check for the string 'item' in json_list, update target if found
-    def __ParseReplyItem(self, json_list, item):
-        ItemList = [i for i, s in enumerate(json_list) if item in str(s)]
-        for i in ItemList:
-            return str(json_list[i]).split(':')[1].replace('\'', '')
-        return None
-
-    # Print all 'item' in json_list
-    def __PrintReplyItems(self, json_list, item):
-        HaveMsg = [i for i, s in enumerate(json_list) if item in str(s)]
-        for msg in HaveMsg:
-            print(json_list[msg])
-
     # Parse the json string MIDAS sends as a reply to data
     def __HandleReply(self, reply):
-        # Unfold the json string into a list
-        # ReplyList=json.loads(reply.decode("utf-8","ignore"), strict=False)
+        # Unfold the json string into a dictionary
         ReplyList = json.loads(reply)
-        tmp = self.__ParseReplyItem(ReplyList, 'RunNumber:')
-        if tmp:
-            self.RunNumber = int(tmp)
-        tmp = self.__ParseReplyItem(ReplyList, 'EventSize:')
-        if tmp:
-            self.MaxEventSize = int(tmp)
-        tmp = self.__ParseReplyItem(ReplyList, 'RunStatus:')
-        if tmp:
-            self.RunStatus = tmp
-        tmp = self.__ParseReplyItem(ReplyList, 'SendToAddress:')
-        if tmp:
-            self.address = tmp
-        tmp = self.__ParseReplyItem(ReplyList, 'SendToPort:')
-        if tmp:
-            self.port = int(tmp)
-        tmp = self.__ParseReplyItem(ReplyList, 'FrontendStatus:')
-        if tmp:
-            self.FrontendStatus = tmp
-        tmp = self.__ParseReplyItem(ReplyList, 'MIDASTime:')
-        if tmp:
-            self.MIDASTime = float(tmp)
-        self.__PrintReplyItems(ReplyList, 'msg:')
-        self.__PrintReplyItems(ReplyList, 'err:')
+        # print(ReplyList)
+        if 'RunNumber' in ReplyList:
+            self.RunNumber = int(ReplyList['RunNumber'])
+        if 'EventSize' in ReplyList:
+            self.MaxEventSize = int(ReplyList['EventSize'])
+        if 'RunStatus:' in ReplyList:
+            self.RunStatus = ReplyList['RunStatus']
+        if 'SendToAddress' in ReplyList:
+            self.address = ReplyList['SendToAddress']
+        if 'SendToPort' in ReplyList:
+            self.port = int(ReplyList['SendToPort'])
+        if 'FrontendStatus' in ReplyList:
+            self.FrontendStatus = ReplyList['FrontendStatus']
+        if 'MIDASTime' in ReplyList:
+            self.MIDASTime = float(ReplyList['MIDASTime'])
+        if 'msg' in ReplyList:
+            print(ReplyList['msg'])
+        if 'err' in ReplyList:
+            print(ReplyList['err'])
 
     def __send_block(self, message, response_size, timeout_limit=10.0):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -496,9 +478,18 @@ class DataPacker:
         self.socket.connect((self.experiment, self.port))
         self.socket.sendall(message)
         response = b""
+        bracket_counter = int(0)
+        # Read reponse back
+        response += self.socket.recv(response_size)
+        # Track brackets, json message is complete when bracket_counter = 0
+        bracket_counter += response.count(b"{")
+        bracket_counter -= response.count(b"}")
         # Read until end of json message
-        while not response.endswith(b"\"]"):
-            response += self.socket.recv(response_size)
+        while bracket_counter > 0:
+            more = self.socket.recv(response_size)
+            bracket_counter += more.count(b"{")
+            bracket_counter -= more.count(b"}")
+            response += more
             # print(response)
         self.socket.shutdown(socket.SHUT_WR)
         self.socket.close()
