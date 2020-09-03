@@ -457,7 +457,7 @@ class DataPacker:
             self.RunNumber = int(ReplyList['RunNumber'])
         if 'EventSize' in ReplyList:
             self.MaxEventSize = int(ReplyList['EventSize'])
-        if 'RunStatus:' in ReplyList:
+        if 'RunStatus' in ReplyList:
             self.RunStatus = ReplyList['RunStatus']
         if 'SendToAddress' in ReplyList:
             self.address = ReplyList['SendToAddress']
