@@ -327,6 +327,12 @@ class DataPacker:
                            databanks=ConnectBanks)
             self.__SendWithTimeout(self.__Flush(ConnectBanks))
         print("MaxEventSize:"+str(self.MaxEventSize))
+        # Announce I am connection on MIDAS speaker
+        connectMsg = "New python connection from " + \
+                     self.MyHostName + \
+                     " PROGRAM:" + str(sys.argv)
+        print(connectMsg)
+        self.AnnounceOnSpeaker("THISHOST", connectMsg)
         self.PauseLogging = False
 
     def __run_forever(self):
@@ -539,13 +545,6 @@ class DataPacker:
     # Main (forever) loop for flushing the queues... run as its own thread
     def __Run(self, periodic_flush_time=1):
         sleep_time = periodic_flush_time
-        # Announce I am connection on MIDAS speaker
-        connectMsg = "New python connection from " + \
-                     self.MyHostName + \
-                     " PROGRAM:" + str(sys.argv)
-        print(connectMsg)
-        self.AnnounceOnSpeaker("THISHOST", connectMsg)
-
         # Run forever!
         while True:
             if self.PauseLogging:
