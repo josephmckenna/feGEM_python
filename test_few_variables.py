@@ -2,9 +2,9 @@
 from MIDAS_GEM import *
 
 #Global data packer
-packer=DataPacker(midas_server="alphamidastest8",port=5555,max_data_rate=100000)
+packer=DataPacker(midas_server="thevoid",port=12345,max_data_rate=100000)
 
-packer.TurnOnTestMode()
+#packer.TurnOnTestMode()
 #packer.TurnOnDebugMode()
 #packer.TurnOffDebugMode()
 
@@ -49,7 +49,7 @@ while True:
     for i in range(10000):
         for j in DataGenerators:
             j.GenerateArray(0)
-        time.sleep(0.1)
+        time.sleep(1)
    #for i in range(10000):
    #   at_p.GenerateArray(1)
    
