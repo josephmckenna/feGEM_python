@@ -326,7 +326,7 @@ class DataPacker:
                            str("\0"),
                            databanks=ConnectBanks)
             self.__SendWithTimeout(self.__Flush(ConnectBanks))
-        print("MaxEventSize:"+str(self.MaxEventSize))
+        print("MaxEventSize:" + str(self.MaxEventSize))
         # Announce I am connection on MIDAS speaker
         connectMsg = "New python connection from " + \
                      self.MyHostName + \
