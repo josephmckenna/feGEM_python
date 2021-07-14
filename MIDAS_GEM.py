@@ -244,7 +244,7 @@ class DataPacker:
             databanks.append(bank)
 
     # Private member functions
-    def __init__(self, midas_server, port=5555, max_data_rate=0):
+    def __init__(self, midas_server, port = 12345, max_data_rate = 0):
         self.experiment = midas_server
         self.initial_port = port
         self.port = port
