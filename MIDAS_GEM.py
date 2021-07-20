@@ -507,7 +507,7 @@ class DataPacker:
         try:
             reply = self.__send_block(data, 1024, timeout_limit)
         except socket.timeout:
-            self.AnnounceOnSpeaker("TCPTimeout", "Connection drop detected...")
+            # self.AnnounceOnSpeaker("TCPTimeout", "Connection drop detected...")
             print("Failed to send after "+str(timeout_limit)+" seconds")
         except ConnectionResetError:
             print("Connection got reset... trying to again...")
